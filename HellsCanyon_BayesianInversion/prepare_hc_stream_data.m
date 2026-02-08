@@ -14,10 +14,23 @@ function [stream_data] = prepare_hc_stream_data(dem_path, varargin)
 %     'mn'          - Reference concavity m/n (default: 0.45)
 %     'outlet_xy'   - [x, y] coordinates of desired outlet (default: auto)
 %     'dem_varname'  - Variable name for DEM in .mat file (default: 'DEMoc')
+%                      TAK: DEMoc = original cropped, DEMcc = conditioned cropped
 %     'S_varname'    - Variable name for STREAMobj (default: 'Sc')
 %     'DA_varname'   - Variable name for drainage area (default: 'Ac')
+%                      TAK: Ac = flowacc * cellsize^2, in m^2
 %     'FD_varname'   - Variable name for FLOWobj (default: 'FDc')
 %     'output_file'  - Path to save extracted data (default: 'hc_stream_data.mat')
+%
+% Compatible with Topographic Analysis Kit (TAK) Basin_xx_Data.mat files.
+% See: https://github.com/amforte/Topographic-Analysis-Kit
+%
+% TAK Basin file variables used:
+%   DEMoc / DEMcc - GRIDobj (original/conditioned DEM cropped to basin)
+%   FDc           - FLOWobj (flow direction)
+%   Ac            - GRIDobj (drainage area in m^2)
+%   Sc            - STREAMobj (stream network)
+%   Chic          - chiplot struct (chi analysis results)
+%   theta_ref     - reference concavity used by TAK
 %
 % Outputs:
 %   stream_data - struct with fields:
@@ -53,11 +66,23 @@ if strcmpi(ext, '.mat')
     fprintf('Loading pre-extracted data from: %s\n', dem_path);
     data = load(dem_path);
 
+    % If TAK theta_ref is available, use it as default m/n
+    if isfield(data, 'theta_ref') && opts.mn == 0.45
+        opts.mn = data.theta_ref;
+        fprintf('  Using theta_ref = %.2f from TAK Basin file\n', opts.mn);
+    end
+
     % Try to extract objects from .mat file
     if isfield(data, opts.S_varname) && isfield(data, opts.dem_varname)
-        % Pre-extracted TopoToolbox objects available
+        % Pre-extracted TopoToolbox objects available (TAK Basin_xx_Data.mat)
         S   = data.(opts.S_varname);
-        DEM = data.(opts.dem_varname);
+        % Prefer conditioned DEM (DEMcc) for elevation extraction if available
+        if isfield(data, 'DEMcc')
+            DEM = data.DEMcc;
+            fprintf('  Using conditioned DEM (DEMcc) for elevations\n');
+        else
+            DEM = data.(opts.dem_varname);
+        end
 
         if isfield(data, opts.DA_varname)
             DA_grid = data.(opts.DA_varname);

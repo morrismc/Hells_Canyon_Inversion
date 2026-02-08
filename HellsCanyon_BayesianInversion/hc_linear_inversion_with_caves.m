@@ -72,9 +72,6 @@ end
 results = struct();
 colors = lines(nK);
 
-% Create comparison figure
-fig = figure('Position', [100, 100, 1600, 900]);
-
 for k = 1:nK
     K = K_range(k);
     fprintf('\n===== Running inversion with K = %.2e =====\n', K);
