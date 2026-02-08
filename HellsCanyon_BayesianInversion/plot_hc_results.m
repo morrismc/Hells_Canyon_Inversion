@@ -1,7 +1,7 @@
 function plot_hc_results(params, logL_chain, n_burnin, params_map, ...
     Z_mod_map, Sz_obs, S, cave_ages, cave_heights, cave_height_err, ...
     cave_pred_map, prior_bounds, cave_prior, param_names, param_scale, ...
-    output_dir, fileTag)
+    output_dir, fileTag, S_DA)
 % PLOT_HC_RESULTS  Diagnostic and summary plots for Hells Canyon MCMC inversion.
 %
 % Creates three figures:
@@ -27,6 +27,7 @@ function plot_hc_results(params, logL_chain, n_burnin, params_map, ...
 %   param_scale  - [1 x n_params] display scaling factors
 %   output_dir   - Directory for saving figures
 %   fileTag      - Tag for output filenames
+%   S_DA         - (optional) Drainage area at stream nodes (m^2) for chi/tau
 
 n_params = size(params, 2);
 total_iter = size(params, 1);
@@ -97,10 +98,11 @@ for j = 1:n_params
     if j == 1; title('Posterior Distributions'); end
 end
 
-% Acceptance rate over time
+% Acceptance rate over time (detect changes in any parameter as proxy)
 subplot(n_params + 1, 2, 2*(n_params+1))
 win = 1000;
-accept_rate = movmean(params(2:end,1) ~= params(1:end-1,1), win);
+any_changed = any(diff(params, 1, 1) ~= 0, 2);
+accept_rate = movmean(any_changed, win);
 plot(accept_rate * 100, 'k-');
 xlabel('Iteration'); ylabel('Accept Rate (%)');
 yline(25, 'r--'); yline(50, 'r--');
@@ -181,7 +183,11 @@ fig3 = figure('Position', [150, 150, 1200, 600]);
 
 % River profile fit
 subplot(1,2,1)
-Stau_map = compute_tau_for_plot(S, S.distance, params_map);
+if nargin >= 18 && ~isempty(S_DA)
+    Stau_map = compute_tau_from_chi(S, S_DA, params_map);
+else
+    Stau_map = [];
+end
 if ~isempty(Stau_map)
     plot(Stau_map / 1e6, Sz_obs, '.', 'Color', [0.7 0.7 0.7], 'MarkerSize', 3); hold on
     plot(Stau_map / 1e6, Z_mod_map, 'k.', 'MarkerSize', 3);
@@ -224,15 +230,27 @@ fprintf('Figures saved to: %s\n', output_dir);
 end
 
 %% Helper function
-function Stau = compute_tau_for_plot(S, S_dist, params_map)
-% Approximate tau for plotting (using chi/K with MAP parameters)
-% This is a rough estimate for visualization only
+function Stau = compute_tau_from_chi(S, S_DA, params_map)
+% Compute tau = chi / K using MAP parameters for plotting.
+% chi = integral of (1/A)^(m/n) dx from outlet upstream.
 try
     K_map  = 10^params_map(3);
     mn_map = params_map(5);  % m/n
 
-    % Use distance as a proxy if we can't compute full chi
-    Stau = S_dist / K_map;
+    % Compute chi via upstream integration
+    Schi = zeros(size(S.distance));
+    Six  = S.ix;
+    Sixc = S.ixc;
+    Sx   = S.distance;
+    Sa   = (1 ./ S_DA).^mn_map;
+
+    for lp = numel(Six):-1:1
+        Schi(Six(lp)) = Schi(Sixc(lp)) + ...
+            (Sa(Sixc(lp)) + (Sa(Six(lp)) - Sa(Sixc(lp))) / 2) * ...
+            abs(Sx(Sixc(lp)) - Sx(Six(lp)));
+    end
+
+    Stau = Schi / K_map;
 catch
     Stau = [];
 end

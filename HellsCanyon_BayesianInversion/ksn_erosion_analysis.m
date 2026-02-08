@@ -117,7 +117,6 @@ E_rel_err_m = opts.E_relict_err * 1e-3;
 % Collect all observations
 n_adj = length(ksn_adj);
 n_rel = length(ksn_rel);
-n_obs = n_adj + n_rel;
 
 % Preallocate accepted samples
 max_accept = opts.n_samples;
@@ -126,8 +125,8 @@ accepted_n    = zeros(max_accept, 1);
 accepted_logL = zeros(max_accept, 1);
 n_accepted = 0;
 
-% Error on ksn observations (assume 15% relative uncertainty)
-ksn_rel_err = 0.15;
+% Fractional uncertainty on ksn observations (15% relative)
+ksn_frac_err = 0.15;
 
 for i = 1:opts.n_samples
     % Draw candidate parameters from prior
@@ -154,7 +153,7 @@ for i = 1:opts.n_samples
     % Adjusted segments: E_adj = K * ksn_adj^n
     for j = 1:n_adj
         % Draw ksn with uncertainty
-        ksn_draw = ksn_adj(j) * (1 + ksn_rel_err * randn);
+        ksn_draw = ksn_adj(j) * (1 + ksn_frac_err * randn);
         if ksn_draw <= 0; ksn_draw = ksn_adj(j); end
 
         E_pred = K_cand * ksn_draw^n_cand;
@@ -162,20 +161,20 @@ for i = 1:opts.n_samples
 
         % Log-space likelihood (errors are multiplicative)
         log_resid = (log(E_adj_draw) - log(E_pred))^2;
-        sigma_log = sqrt((E_adj_err_m/E_adj_draw)^2 + (ksn_rel_err * n_cand)^2);
+        sigma_log = sqrt((E_adj_err_m/E_adj_draw)^2 + (ksn_frac_err * n_cand)^2);
         logL = logL - 0.5 * log_resid / sigma_log^2;
     end
 
     % Relict segments: E_rel = K * ksn_rel^n
     for j = 1:n_rel
-        ksn_draw = ksn_rel(j) * (1 + ksn_rel_err * randn);
+        ksn_draw = ksn_rel(j) * (1 + ksn_frac_err * randn);
         if ksn_draw <= 0; ksn_draw = ksn_rel(j); end
 
         E_pred = K_cand * ksn_draw^n_cand;
         if E_pred <= 0; continue; end
 
         log_resid = (log(E_rel_draw) - log(E_pred))^2;
-        sigma_log = sqrt((E_rel_err_m/E_rel_draw)^2 + (ksn_rel_err * n_cand)^2);
+        sigma_log = sqrt((E_rel_err_m/E_rel_draw)^2 + (ksn_frac_err * n_cand)^2);
         logL = logL - 0.5 * log_resid / sigma_log^2;
     end
 

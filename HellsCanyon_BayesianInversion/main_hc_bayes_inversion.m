@@ -175,13 +175,11 @@ end
 Sz_norm = Sz - min(Sz);
 
 % Stream data error (meters)
-stream_err_base = 5;  % 5 m base uncertainty
+% Balancing between stream and cave data is handled inside hc_loglikelihood.m
+% via the Ws = n_cave/n_stream weight. Do NOT also inflate stream_err here.
+stream_err = 5;  % 5 m base uncertainty on DEM elevations
 n_stream = length(Sz_norm);
 n_cave   = length(cave_ages);
-
-% Weight adjustment for balanced likelihood
-Ws = sqrt(n_cave / n_stream);
-stream_err = stream_err_base / Ws;  % inflate stream error to balance
 
 fprintf('Data loaded: %d stream nodes, %d cave observations\n', n_stream, n_cave);
 
@@ -334,8 +332,7 @@ logL_post   = logL_chain(n_burnin+1:end);
 % Compute statistics
 param_names = {'U_{pre} (m/yr)', 'U_{post} (m/yr)', 'log_{10}(K)', ...
                'n', 'm/n', 't_{capture} (yr)'};
-param_units = {'mm/yr', 'mm/yr', '', '', '', 'Ma'};
-param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];  % for display
+param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];  % for display (mm/yr, mm/yr, -, -, -, Ma)
 
 fprintf('\n========== POSTERIOR SUMMARY ==========\n');
 fprintf('%-20s %12s %12s %20s %20s\n', 'Parameter', 'MAP', 'Median', '68% CI', '95% CI');
@@ -375,6 +372,6 @@ fprintf('\nResults saved to: %s\n', output_dir);
 
 plot_hc_results(params, logL_chain, n_burnin, params_map, Z_mod_map, ...
     Sz_norm, S, cave_ages, cave_heights, cave_height_err, cave_pred_map, ...
-    prior_bounds, cave_prior, param_names, param_scale, output_dir, fileTag);
+    prior_bounds, cave_prior, param_names, param_scale, output_dir, fileTag, S_DA);
 
 fprintf('\nDone. Run plot_hc_results.m for additional visualizations.\n');
