@@ -18,6 +18,11 @@ function [logL, logL_stream, logL_cave] = hc_loglikelihood(obs_stream, ...
 %   logL_stream  - Stream component
 %   logL_cave    - Cave component
 
+% Force column vectors to prevent broadcast/size mismatch
+obs_stream   = obs_stream(:);
+mod_stream   = mod_stream(:);
+sigma_stream = sigma_stream(:);
+
 % Stream profile likelihood
 resid_stream = (obs_stream - mod_stream) ./ sigma_stream;
 logL_stream = -0.5 * sum(resid_stream.^2);
