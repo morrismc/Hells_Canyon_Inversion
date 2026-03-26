@@ -49,7 +49,7 @@ clear; close all; clc;
 % --- File paths ---
 % Stream data: either pre-extracted .mat or DEM file
 % If using prepare_hc_stream_data.m, point to the output .mat file
-stream_data_file = '';  % <-- UPDATE: path to hc_stream_data.mat
+stream_data_file = 'C:\Users\mmorriss\Desktop\Side_projects\Hells_Canyon_Inversion\HellsCanyon_BayesianInversion\hc_stream_data.mat';  % <-- UPDATE: path to hc_stream_data.mat
 
 % Output tag for saving results
 fileTag = 'HC_capture';
@@ -65,9 +65,9 @@ output_dir = pwd;  % <-- UPDATE if desired
 % UPDATE THESE WITH YOUR ACTUAL CAVE DATA:
 % Example values based on published constraints:
 cave_data = [
-    5.5e6,  100,  0.5e6,  20;   % Oldest cave (high, slow incision phase)
-    3.5e6,  120,  0.5e6,  20;   % Middle cave
-    1.5e6,  250,  0.3e6,  20;   % Youngest cave (rapid incision phase)
+    5.5e6,  375,  3.85e6,  20;   % Oldest cave (high, slow incision phase)
+    2.71e6,  343,  1.4e6,  20;   % Middle cave
+    1.53e6,  242,  0.7e6,  20;   % Youngest cave (rapid incision phase)
 ];
 % Column 1: burial age (years)
 % Column 2: height above modern river (m)

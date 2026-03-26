@@ -38,9 +38,9 @@ addpath(genpath(fullfile(fileparts(mfilename('fullpath')), '..', ...
 % Cave burial ages and heights above modern Snake River
 % UPDATE THESE with your actual cave data:
 cave_data = struct();
-cave_data.ages      = [1.5e6, 2.71e6, 5.5e6];  % years before present
-cave_data.heights   = [242,   343,   375];      % meters above river
-cave_data.age_err   = [0.73e6, 1.4e6, 3.8e6];   % 1-sigma age uncertainty
+cave_data.ages      = [5.5e6, 3.5e6, 1.5e6];  % years before present
+cave_data.heights   = [242,   343,   250];      % meters above river
+cave_data.age_err   = [0.5e6, 0.5e6, 0.3e6];   % 1-sigma age uncertainty
 cave_data.height_err= [20,    20,    20];        % 1-sigma height uncertainty
 
 % Derived incision rates from caves
