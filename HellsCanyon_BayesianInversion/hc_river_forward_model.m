@@ -13,9 +13,14 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 % Uses the implicit finite difference scheme of Braun & Willett (2013)
 % with Newton-Raphson iteration for n != 1.
 %
+% IMPORTANT: TopoToolbox STREAMobj properties S.ix and S.ixc are linear
+% indices into the DEM grid, NOT indices into the stream node list.
+% All internal arrays are therefore allocated in grid-index space, and
+% stream-node values are extracted at the end via S.IXgrid.
+%
 % Inputs:
 %   S          - TopoToolbox STREAMobj
-%   S_DA       - Drainage area at each stream node (m^2), vector
+%   S_DA       - Drainage area at each stream node (m^2), vector (N nodes)
 %   U_pre      - Pre-capture incision/uplift rate (m/yr), scalar
 %   U_post     - Post-capture incision/uplift rate (m/yr), scalar
 %   t_capture  - Time of capture event (years before present)
@@ -26,7 +31,8 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 %   dt         - Time step (years)
 %
 % Outputs:
-%   Z_mod      - Modeled elevations at each stream node (m)
+%   Z_mod      - Modeled elevations at each stream node (m), column vector
+%                length = numel(S.IXgrid)
 %
 % Adapted from Gallen & Fernandez-Blanco (2021) bayes_profiler code.
 % Modified for Hells Canyon drainage capture scenario.
@@ -35,93 +41,92 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 %   Braun & Willett (2013), Geomorphology
 %   Gallen & Fernandez-Blanco (2021), JGR-Earth Surface
 
-%% Ensure inputs are column vectors
+%% Map node-indexed inputs to grid-index space
+% S.ix, S.ixc, and S.IXgrid are all linear indices into the DEM grid.
+% We must work in grid space so that indexing with S.ix/S.ixc is valid.
 S_DA = S_DA(:);
+n_grid = max(S.IXgrid);  % size of grid-index space
 
-%% Compute initial steady-state profile with U_pre
-% At steady state: U_pre = K * A^m * S^n
-% => S = (U_pre / K)^(1/n) * A^(-m/n)
-% => z = integral of S dx from outlet upstream
-mn = m / n;
+% Map drainage area from node space to grid space
+DA_grid = zeros(n_grid, 1);
+DA_grid(S.IXgrid) = S_DA;
 
-Z_mod = calculate_z(S, S_DA, U_pre, K, mn, n);
-Z_mod = check_z(S, Z_mod);
+% Map distances from node space to grid space
+dist_grid = zeros(n_grid, 1);
+dist_grid(S.IXgrid) = S.distance;
 
-%% Prepare the implicit finite-difference solver
-% Precompute the "velocity field" = K * A^m for the stream power term
+% Map K to grid space
 if isscalar(K)
-    S_K = K * ones(size(S_DA));
+    K_grid = K * ones(n_grid, 1);
 else
-    S_K = K;
+    K_grid = zeros(n_grid, 1);
+    K_grid(S.IXgrid) = K(:);
 end
 
-[d, r, Af, dx, outlet_nodes] = fastscape_eroder_data_prep(S, S_DA, S_K, m);
+%% Compute initial steady-state profile with U_pre
+mn = m / n;
+Z_grid = calculate_z(S, DA_grid, dist_grid, U_pre, K, mn, n);
+Z_grid = check_z(S, Z_grid);
+
+%% Prepare the implicit finite-difference solver
+[d, r, Af, dx, outlet_nodes] = fastscape_eroder_data_prep(S, DA_grid, K_grid, m, dist_grid);
 
 %% Time-stepping forward model
 n_steps = ceil(run_time / dt);
 
 for step = 1:n_steps
-    current_time = step * dt;  % time elapsed from start of model
-
-    % Determine which uplift rate applies
-    % t_capture is measured as "years before present"
-    % run_time should equal or exceed t_capture
-    % time_before_present = run_time - current_time
+    current_time = step * dt;
     time_bp = run_time - current_time;
 
     if time_bp >= t_capture
-        % We're in the pre-capture phase (before the capture event)
         U_current = U_pre;
     else
-        % Post-capture phase
         U_current = U_post;
     end
 
-    % Apply uplift to all nodes
-    Z_mod = Z_mod + U_current * dt;
+    % Apply uplift to stream nodes only
+    Z_grid(S.IXgrid) = Z_grid(S.IXgrid) + U_current * dt;
 
     % Apply erosion using implicit scheme
-    Z_mod = fastscape_eroder_outlets(Z_mod, n, dt, Af, d, r, dx, ...
+    Z_grid = fastscape_eroder_outlets(Z_grid, n, dt, Af, d, r, dx, ...
         U_current, outlet_nodes);
 end
 
-% Ensure output is a column vector
+%% Extract stream node elevations from grid space
+Z_mod = Z_grid(S.IXgrid);
 Z_mod = Z_mod(:);
 
 end
 
 %% ===================== Helper Functions =====================
 
-function z = calculate_z(S, S_DA, U, K, mn, n)
+function z = calculate_z(S, DA_grid, dist_grid, U, K, mn, n)
 % Calculate steady-state elevation profile using chi integration.
-% z = integral from outlet to x of: (U/K)^(1/n) * (1/A)^(m/n) dx
-%
-% For a scalar K:
-%   z(x) = (U/K)^(1/n) * integral of (1/A)^(m/n) dx
+% Works in grid-index space.
 
 if isscalar(K)
-    Sa = (U / K)^(1/n) * (1 ./ S_DA).^mn;
+    Sa = zeros(size(DA_grid));
+    Sa(S.IXgrid) = (U / K)^(1/n) * (1 ./ DA_grid(S.IXgrid)).^mn;
 else
-    Sa = (U ./ K).^(1/n) .* (1 ./ S_DA).^mn;
+    Sa = zeros(size(DA_grid));
+    Sa(S.IXgrid) = (U ./ DA_grid(S.IXgrid)).^(1/n) .* (1 ./ DA_grid(S.IXgrid)).^mn;
 end
 
-z = zeros(size(S.distance));
+z   = zeros(size(DA_grid));
 Six  = S.ix;
 Sixc = S.ixc;
-Sx   = S.distance;
 
 % Integrate upstream from outlet
 for lp = numel(Six):-1:1
     z(Six(lp)) = z(Sixc(lp)) + ...
         (Sa(Sixc(lp)) + (Sa(Six(lp)) - Sa(Sixc(lp))) / 2) * ...
-        abs(Sx(Sixc(lp)) - Sx(Six(lp)));
+        abs(dist_grid(Sixc(lp)) - dist_grid(Six(lp)));
 end
 
 end
 
 function z = check_z(S, z)
 % Ensure no node is lower than its downstream neighbor.
-% Prevents backward-flowing rivers from initial conditions.
 Six  = S.ix;
 Sixc = S.ixc;
 
@@ -133,34 +138,25 @@ end
 
 end
 
-function [d, r, A, dx, outlet_nodes] = fastscape_eroder_data_prep(S, S_DA, S_K, m)
+function [d, r, A, dx, outlet_nodes] = fastscape_eroder_data_prep(S, DA_grid, K_grid, m, dist_grid)
 % Prepare data structures for the implicit finite difference solver.
-%
-% Outputs:
-%   d   - donor (upstream) node indices
-%   r   - receiver (downstream) node indices
-%   A   - K * DA^m at each node (erosion velocity field)
-%   dx  - distance between donor-receiver pairs
-%   outlet_nodes - indices of outlet nodes
+% All arrays are in grid-index space.
 
 d  = S.ix;
 r  = S.ixc;
-dx = abs(S.distance(d) - S.distance(r));
+dx = abs(dist_grid(d) - dist_grid(r));
 
-% Erosion velocity field: K * A^m
-A = S_K .* S_DA.^m;
+% Erosion velocity field: K * A^m (grid-indexed)
+A = K_grid .* DA_grid.^m;
 
-% Find outlet nodes
+% Find outlet nodes (returns grid linear indices)
 outlet_nodes = streampoi(S, 'outlets', 'ix');
 
 end
 
 function S_Z = fastscape_eroder_outlets(S_Z, n, dt, A, d, r, dx, U, outlets)
 % Implicit finite-difference erosion following Braun & Willett (2013).
-%
-% Fixes outlet elevations (base level = 0) and solves upstream.
-% For n=1: direct algebraic solution.
-% For n!=1: Newton-Raphson iterative solution at each node.
+% All arrays are in grid-index space.
 
 % Fix outlet elevations at base level = 0
 for k = 1:length(outlets)
@@ -169,7 +165,6 @@ end
 
 % Erode from downstream to upstream (implicit scheme)
 for j = 1:length(d)
-    % tt is the dimensionless erosion coefficient
     tt = A(d(j)) * dt / dx(j);
 
     if abs(n - 1) < 1e-6
@@ -185,28 +180,15 @@ end
 
 function ztp1 = newtonraphson(zt, ztp1d, dx, tt, n)
 % Newton-Raphson solver for the implicit stream power equation when n != 1.
-%
-% Solves: f(z) = z - zt + tt * dx * ((z - ztp1d) / dx)^n = 0
-%
-% Inputs:
-%   zt    - elevation at current time step (before erosion)
-%   ztp1d - downstream node elevation (already updated)
-%   dx    - distance between nodes
-%   tt    - K * A^m * dt / dx
-%   n     - slope exponent
-%
-% Output:
-%   ztp1  - updated elevation at next time step
 
-ztp1 = zt;  % initial guess
-tol  = 1e-3;  % convergence tolerance (meters)
+ztp1 = zt;
+tol  = 1e-3;
 max_iter = 100;
 
 for iter = 1:max_iter
     slope = (ztp1 - ztp1d) / dx;
 
     if slope <= 0
-        % If slope is negative or zero, set to small positive value
         ztp1 = ztp1d + 0.001;
         slope = 0.001 / dx;
     end
@@ -223,11 +205,9 @@ for iter = 1:max_iter
 
     ztp1 = ztp1_new;
 
-    % Ensure elevation stays above downstream node
     if ztp1 < ztp1d
         ztp1 = ztp1d + 0.001;
     end
 end
 
-% If not converged, use last estimate
 end
