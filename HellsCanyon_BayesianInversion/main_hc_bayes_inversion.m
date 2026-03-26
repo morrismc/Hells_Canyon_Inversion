@@ -124,11 +124,12 @@ cave_prior.U_post_mean     = 1.25e-4;  % 0.125 mm/yr (midpoint of 0.09-0.16)
 cave_prior.U_post_std      = 3.5e-5;   % +/- 0.035 mm/yr
 
 % --- Starting values (near expected MAP for faster convergence) ---
+% Updated from ksn_erosion_analysis results (Bayesian MAP: K=1.75e-6, n=0.71)
 params_init = [
     1e-5,     ... % U_pre = 0.01 mm/yr
     1.25e-4,  ... % U_post = 0.125 mm/yr
-    -6.24,    ... % log10(K) ~ 5.7e-7
-    1.0,      ... % n = 1 (start at linear)
+    -5.76,    ... % log10(K) ~ 1.75e-6 (from ksn Bayesian MAP)
+    0.71,     ... % n = 0.71 (from ksn Bayesian MAP)
     0.45,     ... % m/n = 0.45
     2.1e6     ... % t_capture = 2.1 Ma
 ];

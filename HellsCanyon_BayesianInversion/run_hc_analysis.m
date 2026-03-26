@@ -76,9 +76,11 @@ if ~isempty(ksn_file) && exist(ksn_file, 'file')
     fprintf('  Best K (n=1, relict):   %.2e\n', ksn_results.K_n1_relict);
 
     % Store K values for downstream analyses
-    K_low  = ksn_results.K_ci95(1);
+    % Use relict, adjusted, and Bayesian K for a meaningful 3-way comparison
+    % (K_ci95 can collapse when posterior is tight, giving duplicates)
+    K_low  = ksn_results.K_n1_relict;
     K_mid  = ksn_results.K_n1_adjusted;  % Use n=1 adjusted for linear inversion
-    K_high = ksn_results.K_ci95(2);
+    K_high = ksn_results.K_median;
 elseif ~isempty(ksn_file) && ~exist(ksn_file, 'file')
     % Path was set but file not found — likely a typo or wrong path
     warning('ksn_file path was set but file not found:\n  %s\nCheck the path and file extension (common typo: .xslx instead of .xlsx).\nUsing default K values.', ksn_file);
