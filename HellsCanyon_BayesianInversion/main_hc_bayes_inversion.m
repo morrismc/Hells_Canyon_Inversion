@@ -229,12 +229,23 @@ K_init = 10^params_init(3);
 m_init = params_init(5) * params_init(4);  % m = (m/n) * n
 
 fprintf('Running initial forward model...\n');
+fprintf('  S nodes (IXgrid): %d\n', numel(S.IXgrid));
+fprintf('  S.distance size: [%s]\n', num2str(size(S.distance)));
+fprintf('  Sz_norm size:     [%s]\n', num2str(size(Sz_norm)));
+fprintf('  S_DA size:        [%s]\n', num2str(size(S_DA)));
+
 Z_mod = hc_river_forward_model(S, S_DA, params_init(1), params_init(2), ...
     params_init(6), K_init, m_init, params_init(4), run_time, dt_forward);
+
+fprintf('  Z_mod size:       [%s]\n', num2str(size(Z_mod)));
+fprintf('  sigma size:       [%s]\n', num2str(size(stream_err * ones(n_stream, 1))));
 
 % Initial cave predictions
 cave_pred = cave_forward_model(cave_ages, params_init(6), ...
     params_init(1), params_init(2));
+
+fprintf('  cave_heights size: [%s]\n', num2str(size(cave_heights)));
+fprintf('  cave_pred size:    [%s]\n', num2str(size(cave_pred)));
 
 % Initial likelihood
 [logL_init, ~, ~] = hc_loglikelihood(Sz_norm, Z_mod, ...

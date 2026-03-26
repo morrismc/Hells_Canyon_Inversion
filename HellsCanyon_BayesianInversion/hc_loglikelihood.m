@@ -23,6 +23,13 @@ obs_stream   = obs_stream(:);
 mod_stream   = mod_stream(:);
 sigma_stream = sigma_stream(:);
 
+% Diagnostic: check sizes match
+if length(obs_stream) ~= length(mod_stream) || length(obs_stream) ~= length(sigma_stream)
+    error('hc_loglikelihood:sizeMismatch', ...
+        'Size mismatch: obs_stream=%d, mod_stream=%d, sigma_stream=%d', ...
+        length(obs_stream), length(mod_stream), length(sigma_stream));
+end
+
 % Stream profile likelihood
 resid_stream = (obs_stream - mod_stream) ./ sigma_stream;
 logL_stream = -0.5 * sum(resid_stream.^2);
