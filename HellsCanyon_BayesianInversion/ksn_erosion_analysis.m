@@ -57,14 +57,52 @@ opts = p.Results;
 fprintf('Loading ksn data from: %s\n', ksn_file);
 T = readtable(ksn_file);
 
+fprintf('  Columns found: %s\n', strjoin(T.Properties.VariableNames, ', '));
+
+% Detect segment column flexibly (handles 'Segment', 'segment_num', 'segment', etc.)
+seg_candidates = {'Segment', 'segment_num', 'segment', 'seg', 'Seg'};
+seg_col = '';
+for ci = 1:length(seg_candidates)
+    if any(strcmp(T.Properties.VariableNames, seg_candidates{ci}))
+        seg_col = seg_candidates{ci};
+        break;
+    end
+end
+if isempty(seg_col)
+    error(['Cannot find segment column in %s.\n' ...
+           'Expected one of: %s\n' ...
+           'Found columns: %s'], ...
+          ksn_file, strjoin(seg_candidates, ', '), ...
+          strjoin(T.Properties.VariableNames, ', '));
+end
+fprintf('  Using segment column: "%s"\n', seg_col);
+
+% Detect ksn column flexibly
+ksn_candidates = {'ksn', 'Ksn', 'KSN', 'ksn_mean', 'ksn_median'};
+ksn_col = '';
+for ci = 1:length(ksn_candidates)
+    if any(strcmp(T.Properties.VariableNames, ksn_candidates{ci}))
+        ksn_col = ksn_candidates{ci};
+        break;
+    end
+end
+if isempty(ksn_col)
+    error(['Cannot find ksn column in %s.\n' ...
+           'Expected one of: %s\n' ...
+           'Found columns: %s'], ...
+          ksn_file, strjoin(ksn_candidates, ', '), ...
+          strjoin(T.Properties.VariableNames, ', '));
+end
+fprintf('  Using ksn column: "%s"\n', ksn_col);
+
 % Extract ksn values by segment
 % Segment 1 = below knickpoint (adjusted/responding to capture)
 % Segment 2 = above knickpoint (relict/pre-capture)
-idx_adjusted = T.Segment == 1;
-idx_relict   = T.Segment == 2;
+idx_adjusted = T.(seg_col) == 1;
+idx_relict   = T.(seg_col) == 2;
 
-ksn_adj = T.ksn(idx_adjusted);
-ksn_rel = T.ksn(idx_relict);
+ksn_adj = T.(ksn_col)(idx_adjusted);
+ksn_rel = T.(ksn_col)(idx_relict);
 
 % Remove NaN/zero values
 ksn_adj = ksn_adj(ksn_adj > 0 & ~isnan(ksn_adj));
