@@ -65,9 +65,9 @@ output_dir = pwd;  % <-- UPDATE if desired
 % UPDATE THESE WITH YOUR ACTUAL CAVE DATA:
 % Example values based on published constraints:
 cave_data = [
-    5.5e6,  375,  3.85e6,  20;   % Oldest cave (high, slow incision phase)
-    2.71e6,  343,  1.4e6,  20;   % Middle cave
-    1.53e6,  242,  0.7e6,  20;   % Youngest cave (rapid incision phase)
+    1.5e6,   242,  0.73e6,  20;   % Youngest cave (rapid incision phase)
+    2.71e6,  343,  1.4e6,   20;   % Middle cave
+    5.5e6,   375,  3.8e6,   20;   % Oldest cave (high, slow incision phase)
 ];
 % Column 1: burial age (years)
 % Column 2: height above modern river (m)
