@@ -160,8 +160,34 @@ if ~isempty(stream_data_file) && exist(stream_data_file, 'file')
     end
 
     S    = sd.S;
-    Sz   = sd.Sz;
-    S_DA = sd.S_DA;
+    Sz   = sd.Sz(:);    % force column vector
+    S_DA = sd.S_DA(:);  % force column vector
+
+    % Validate that node counts are consistent
+    n_nodes = numel(S.IXgrid);
+    if length(Sz) ~= n_nodes
+        warning('Sz (%d) and S.IXgrid (%d) have different lengths. Re-extracting from S.', ...
+            length(Sz), n_nodes);
+        % S_DA and Sz may have been extracted from a different STREAMobj.
+        % Re-extract if the loaded S has the right fields.
+        if isfield(sd, 'DEM') && isa(sd.DEM, 'GRIDobj')
+            Sz   = double(sd.DEM.Z(S.IXgrid));
+        else
+            % Truncate or pad to match S node count
+            Sz = Sz(1:min(length(Sz), n_nodes));
+            if length(Sz) < n_nodes
+                error('Cannot reconcile Sz length with S: %d vs %d nodes', length(Sz), n_nodes);
+            end
+        end
+    end
+    if length(S_DA) ~= n_nodes
+        warning('S_DA (%d) and S.IXgrid (%d) have different lengths.', ...
+            length(S_DA), n_nodes);
+        S_DA = S_DA(1:min(length(S_DA), n_nodes));
+        if length(S_DA) < n_nodes
+            error('Cannot reconcile S_DA length with S: %d vs %d nodes', length(S_DA), n_nodes);
+        end
+    end
 else
     fprintf('WARNING: No stream data file specified.\n');
     fprintf('Please run prepare_hc_stream_data.m first to create hc_stream_data.mat\n');

@@ -35,6 +35,9 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 %   Braun & Willett (2013), Geomorphology
 %   Gallen & Fernandez-Blanco (2021), JGR-Earth Surface
 
+%% Ensure inputs are column vectors
+S_DA = S_DA(:);
+
 %% Compute initial steady-state profile with U_pre
 % At steady state: U_pre = K * A^m * S^n
 % => S = (U_pre / K)^(1/n) * A^(-m/n)
@@ -81,6 +84,9 @@ for step = 1:n_steps
     Z_mod = fastscape_eroder_outlets(Z_mod, n, dt, Af, d, r, dx, ...
         U_current, outlet_nodes);
 end
+
+% Ensure output is a column vector
+Z_mod = Z_mod(:);
 
 end
 
