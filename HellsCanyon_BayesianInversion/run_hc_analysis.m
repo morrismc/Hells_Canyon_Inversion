@@ -78,6 +78,13 @@ if ~isempty(ksn_file) && exist(ksn_file, 'file')
     K_low  = ksn_results.K_ci95(1);
     K_mid  = ksn_results.K_n1_adjusted;  % Use n=1 adjusted for linear inversion
     K_high = ksn_results.K_ci95(2);
+elseif ~isempty(ksn_file) && ~exist(ksn_file, 'file')
+    % Path was set but file not found — likely a typo or wrong path
+    warning('ksn_file path was set but file not found:\n  %s\nCheck the path and file extension (common typo: .xslx instead of .xlsx).\nUsing default K values.', ksn_file);
+    K_low  = 7.0e-8;
+    K_mid  = 5.73e-7;
+    K_high = 7.0e-7;
+    ksn_results = [];
 else
     fprintf('  SKIPPED: No ksn_file specified. Using default K values.\n');
     % Default K values from previous analysis

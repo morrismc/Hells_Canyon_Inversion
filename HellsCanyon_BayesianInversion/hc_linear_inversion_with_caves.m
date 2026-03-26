@@ -84,8 +84,22 @@ for k = 1:nK
         % Close any figures opened by Gallen's code
         close(gcf);
 
+        % Pre-process DEM for flow routing before calling Gallen's function.
+        % Gallen's addOptional 'flowOption' parameter causes inputParser to
+        % misidentify string values as parameter names in MATLAB 2019b+.
+        % We handle fill/carve here and pass no flowOption to avoid the crash.
+        DEM_use = DEM;
+        switch lower(char(opts.flowOption))
+            case 'fill'
+                DEM_use = fillsinks(DEM);
+            case 'carve'
+                FD_tmp  = FLOWobj(DEM, 'preprocess', 'carve');
+                DEM_use = imposemin(FD_tmp, DEM);
+            % empty string / [] : pass DEM as-is (already conditioned)
+        end
+
         [A, Umod, S, Stau, tau_steps] = linear_inversion_block_uplift_erodibility(...
-            DEM, K, tau_inc_k, opts.crita, opts.mn, opts.flowOption);
+            DEM_use, K, tau_inc_k, opts.crita, opts.mn);
 
         % Store results
         results(k).K = K;
