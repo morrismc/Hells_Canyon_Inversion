@@ -83,8 +83,8 @@ cave_height_err = cave_data(:,4);
 use_informative_priors = true;  % true = Gaussian priors from caves on timing/rates
 
 % --- MCMC Settings ---
-n_burnin   = 1e4;    % Burn-in iterations (increase for production: 3e5)
-n_postburn = 1e5;    % Post-burn-in iterations (increase for production: 3e6)
+n_burnin   = 1e4;    % Burn-in iterations (increase for production: 5e4+)
+n_postburn = 5e4;    % Post-burn-in iterations (increase for production: 5e5+)
 dt_forward = 25000;  % Forward model time step (years)
 
 % --- Run time for forward model ---
@@ -123,25 +123,25 @@ cave_prior.U_pre_std       = 5e-6;     % +/- 0.005 mm/yr
 cave_prior.U_post_mean     = 1.25e-4;  % 0.125 mm/yr (midpoint of 0.09-0.16)
 cave_prior.U_post_std      = 3.5e-5;   % +/- 0.035 mm/yr
 
-% --- Starting values (near expected MAP for faster convergence) ---
-% Updated from ksn_erosion_analysis results (Bayesian MAP: K=1.75e-6, n=0.71)
+% --- Starting values (near MAP from initial MCMC test runs) ---
 params_init = [
-    1e-5,     ... % U_pre = 0.01 mm/yr
-    1.25e-4,  ... % U_post = 0.125 mm/yr
-    -5.76,    ... % log10(K) ~ 1.75e-6 (from ksn Bayesian MAP)
-    0.71,     ... % n = 0.71 (from ksn Bayesian MAP)
+    9.2e-5,   ... % U_pre = 0.092 mm/yr (from MCMC MAP)
+    1.45e-4,  ... % U_post = 0.145 mm/yr (from MCMC MAP)
+    -5.0,     ... % log10(K) ~ 1e-5 (from MCMC MAP)
+    1.5,      ... % n = 1.5 (between the two MCMC modes)
     0.45,     ... % m/n = 0.45
-    2.1e6     ... % t_capture = 2.1 Ma
+    2.5e6     ... % t_capture = 2.5 Ma (from MCMC MAP)
 ];
 
 % --- MCMC step sizes (tune for ~25-50% acceptance) ---
+% Tuned from initial test runs (12-19% acceptance with previous values)
 p_steps = [
-    2e-6,    ... % U_pre
-    1e-5,    ... % U_post
-    0.05,    ... % log10(K)
-    0.05,    ... % n
-    0.01,    ... % m/n
-    5e4      ... % t_capture (50 kyr steps)
+    1e-6,    ... % U_pre     (shrunk: posterior is tight)
+    5e-6,    ... % U_post
+    0.03,    ... % log10(K)
+    0.03,    ... % n
+    0.007,   ... % m/n
+    3e4      ... % t_capture (30 kyr steps)
 ];
 
 n_params = length(params_init);
@@ -209,6 +209,11 @@ n_stream = length(Sz_norm);
 n_cave   = length(cave_ages);
 
 fprintf('Data loaded: %d stream nodes, %d cave observations\n', n_stream, n_cave);
+
+% Precompute grid-to-node mapping (avoids recomputation every forward model call)
+% This is used internally by hc_river_forward_model
+n_grid_cells = max(S.IXgrid);
+fprintf('DEM grid cells: %d (%.1fx stream nodes)\n', n_grid_cells, n_grid_cells/n_stream);
 
 %% ========================================================================
 %  SECTION 4: INITIALIZE MCMC
