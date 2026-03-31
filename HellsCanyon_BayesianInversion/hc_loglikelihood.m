@@ -39,12 +39,13 @@ if ~isempty(obs_cave) && ~isempty(mod_cave)
     resid_cave = (obs_cave - mod_cave) ./ sigma_cave;
     logL_cave = -0.5 * sum(resid_cave.^2);
 
-    % Balance weights: scale stream likelihood so cave data has equal influence
-    n_stream = length(obs_stream);
-    n_cave   = length(obs_cave);
-    Ws = n_cave / n_stream;
-
-    logL = Ws * logL_stream + logL_cave;
+    % Stream and cave likelihoods are combined with equal weight per data
+    % point (Ws = 1).  Cave constraints on timing and rates already enter
+    % through informative Gaussian priors (logprior_hc), so there is no
+    % need to down-weight the stream data here.  The previous weighting
+    % (Ws = n_cave/n_stream ≈ 0.006) effectively silenced the stream
+    % profile, producing poor river-profile fits.
+    logL = logL_stream + logL_cave;
 else
     logL_cave = 0;
     logL = logL_stream;

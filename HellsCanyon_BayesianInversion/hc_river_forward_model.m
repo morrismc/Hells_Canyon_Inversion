@@ -163,8 +163,11 @@ for k = 1:length(outlets)
     S_Z(outlets(k)) = 0;
 end
 
-% Erode from downstream to upstream (implicit scheme)
-for j = 1:length(d)
+% Erode from downstream to upstream (implicit scheme).
+% TopoToolbox orders S.ix/S.ixc from headwaters (index 1) to outlet
+% (index end), so we iterate backwards to process outlet-to-headwaters,
+% ensuring each downstream node is updated before its upstream donors.
+for j = length(d):-1:1
     tt = A(d(j)) * dt / dx(j);
 
     if abs(n - 1) < 1e-6
