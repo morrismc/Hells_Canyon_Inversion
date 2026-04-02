@@ -149,8 +149,12 @@ dx = abs(dist_grid(d) - dist_grid(r));
 % Erosion velocity field: K * A^m (grid-indexed)
 A = K_grid .* DA_grid.^m;
 
-% Find outlet nodes (returns grid linear indices)
-outlet_nodes = streampoi(S, 'outlets', 'ix');
+% Find outlet nodes as grid-linear indices.
+% Outlets are nodes that appear as receivers (S.ixc) but never as donors
+% (S.ix).  This is more robust than streampoi, whose 'ix' output format
+% (node-list index vs. grid-linear index) varies across TopoToolbox
+% versions and can silently pin the wrong grid cell to base level.
+outlet_nodes = setdiff(S.ixc, S.ix);
 
 end
 

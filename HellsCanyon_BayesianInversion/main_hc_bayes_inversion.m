@@ -135,13 +135,15 @@ params_init = [
 ];
 
 % --- MCMC step sizes (tune for ~25-50% acceptance) ---
+% Larger steps than the original values to improve exploration given the
+% smoother likelihood surface from Gallen-style error inflation.
 p_steps = [
-    2e-6,    ... % U_pre
-    1e-5,    ... % U_post
-    0.05,    ... % log10(K)
-    0.05,    ... % n
-    0.01,    ... % m/n
-    5e4      ... % t_capture (50 kyr steps)
+    5e-6,    ... % U_pre
+    3e-5,    ... % U_post
+    0.15,    ... % log10(K)
+    0.15,    ... % n
+    0.02,    ... % m/n
+    2e5      ... % t_capture (200 kyr steps)
 ];
 
 n_params = length(params_init);
@@ -202,9 +204,11 @@ end
 Sz_norm = Sz - min(Sz);
 
 % Stream data error (meters)
-% Balancing between stream and cave data is handled inside hc_loglikelihood.m
-% via the Ws = n_cave/n_stream weight. Do NOT also inflate stream_err here.
-stream_err = 5;  % 5 m base uncertainty on DEM elevations
+% This is the BASE uncertainty before Gallen-style inflation in
+% hc_loglikelihood.m (which multiplies by sqrt(n_stream/n_cave) to balance
+% the two datasets).  Use a value that reflects both DEM noise (~5 m) and
+% model inadequacy (uniform K, simple two-phase uplift, etc.).
+stream_err = 50;  % 50 m to account for model simplifications
 n_stream = length(Sz_norm);
 n_cave   = length(cave_ages);
 
