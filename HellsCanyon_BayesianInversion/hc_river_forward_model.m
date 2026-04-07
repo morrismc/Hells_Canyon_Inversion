@@ -96,6 +96,30 @@ end
 Z_mod = Z_grid(S.IXgrid);
 Z_mod = Z_mod(:);
 
+%% Diagnostic output (printed only for the first call per MATLAB session)
+persistent diag_printed;
+if isempty(diag_printed)
+    diag_printed = true;
+    fprintf('\n--- Forward Model Diagnostics ---\n');
+    fprintf('  Grid size (n_grid): %d\n', n_grid);
+    fprintf('  Stream nodes: %d\n', numel(S.IXgrid));
+    fprintf('  Outlet nodes found: %d  (grid indices: %s)\n', ...
+        numel(outlet_nodes), mat2str(outlet_nodes(:)'));
+    fprintf('  Outlet elevations in Z_mod: %s\n', ...
+        mat2str(Z_grid(outlet_nodes)', 4));
+    % Find which stream-node positions correspond to outlets
+    [outlet_is_stream, outlet_node_pos] = ismember(outlet_nodes, S.IXgrid);
+    fprintf('  Outlets are stream nodes: %s\n', mat2str(outlet_is_stream'));
+    fprintf('  Initial steady-state relief: %.1f m\n', ...
+        max(calculate_z(S, DA_grid, dist_grid, U_pre, K, m/n, n)) - 0);
+    fprintf('  Final model Z range: [%.1f, %.1f] m\n', min(Z_mod), max(Z_mod));
+    fprintf('  Number of time steps: %d  (dt=%.0f yr)\n', n_steps, dt);
+    fprintf('  dx range: [%.1f, %.1f] m\n', min(dx(dx>0)), max(dx));
+    fprintf('  max(K*A^m): %.2e   min(K*A^m): %.2e\n', ...
+        max(Af(S.IXgrid)), min(Af(S.IXgrid)));
+    fprintf('--- End Diagnostics ---\n\n');
+end
+
 end
 
 %% ===================== Helper Functions =====================
