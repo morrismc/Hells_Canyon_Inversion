@@ -135,15 +135,13 @@ params_init = [
 ];
 
 % --- MCMC step sizes (tune for ~25-50% acceptance) ---
-% Larger steps than the original values to improve exploration given the
-% smoother likelihood surface from Gallen-style error inflation.
 p_steps = [
-    5e-6,    ... % U_pre
-    3e-5,    ... % U_post
-    0.15,    ... % log10(K)
-    0.15,    ... % n
-    0.02,    ... % m/n
-    2e5      ... % t_capture (200 kyr steps)
+    3e-6,    ... % U_pre
+    2e-5,    ... % U_post
+    0.1,     ... % log10(K)
+    0.1,     ... % n
+    0.015,   ... % m/n
+    1e5      ... % t_capture (100 kyr steps)
 ];
 
 n_params = length(params_init);
@@ -204,11 +202,10 @@ end
 Sz_norm = Sz - min(Sz);
 
 % Stream data error (meters)
-% This is the BASE uncertainty before Gallen-style inflation in
-% hc_loglikelihood.m (which multiplies by sqrt(n_stream/n_cave) to balance
-% the two datasets).  Use a value that reflects both DEM noise (~5 m) and
-% model inadequacy (uniform K, simple two-phase uplift, etc.).
-stream_err = 50;  % 50 m to account for model simplifications
+% Should reflect model inadequacy (uniform K, simple two-phase uplift),
+% not just DEM noise.  The model can't match every node, so this is the
+% expected per-node RMS residual at a good fit (~10-15% of total relief).
+stream_err = 200;  % m; tune: lower = tighter fit, higher = more exploration
 n_stream = length(Sz_norm);
 n_cave   = length(cave_ages);
 
@@ -254,6 +251,25 @@ Z_mod_map  = Z_mod;
 cave_pred_map = cave_pred;
 
 fprintf('Initial log-likelihood: %.2f\n', logL_init);
+
+% --- Diagnostics: compare initial model to observations ---
+fprintf('\n--- Initial Model vs Observations ---\n');
+fprintf('  Observed elevation range: [%.1f, %.1f] m  (relief = %.1f m)\n', ...
+    min(Sz_norm), max(Sz_norm), max(Sz_norm) - min(Sz_norm));
+fprintf('  Model elevation range:    [%.1f, %.1f] m  (relief = %.1f m)\n', ...
+    min(Z_mod), max(Z_mod), max(Z_mod) - min(Z_mod));
+fprintf('  RMS residual: %.1f m  (ratio to relief: %.1f%%)\n', ...
+    sqrt(mean((Sz_norm - Z_mod).^2)), ...
+    100 * sqrt(mean((Sz_norm - Z_mod).^2)) / max(max(Sz_norm), 1));
+fprintf('  Cave predictions vs observed:\n');
+for ci = 1:length(cave_ages)
+    fprintf('    Cave %d: obs=%.0f m, mod=%.0f m, resid=%.0f m\n', ...
+        ci, cave_heights(ci), cave_pred(ci), cave_heights(ci) - cave_pred(ci));
+end
+fprintf('  stream_err = %.0f m, n_stream = %d, n_cave = %d\n', ...
+    stream_err, n_stream, n_cave);
+fprintf('--- End Initial Diagnostics ---\n');
+
 fprintf('\nStarting MCMC: %d burn-in + %d post-burn-in iterations\n', ...
     n_burnin, n_postburn);
 
