@@ -13,10 +13,9 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 % Uses the implicit finite difference scheme of Braun & Willett (2013)
 % with Newton-Raphson iteration for n != 1.
 %
-% IMPORTANT: TopoToolbox STREAMobj properties S.ix and S.ixc are linear
-% indices into the DEM grid, NOT indices into the stream node list.
-% All internal arrays are therefore allocated in grid-index space, and
-% stream-node values are extracted at the end via S.IXgrid.
+% All internal arrays are in NODE space (length = numel(S.IXgrid)),
+% matching the TopoToolbox convention where S.ix and S.ixc are indices
+% into the stream-node list, not into the DEM grid.
 %
 % Inputs:
 %   S          - TopoToolbox STREAMobj
@@ -24,7 +23,7 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 %   U_pre      - Pre-capture incision/uplift rate (m/yr), scalar
 %   U_post     - Post-capture incision/uplift rate (m/yr), scalar
 %   t_capture  - Time of capture event (years before present)
-%   K          - Erodibility coefficient (m^(1-2m)/yr), scalar or vector
+%   K          - Erodibility coefficient, scalar or vector (N nodes)
 %   m          - Drainage area exponent, scalar
 %   n          - Slope exponent, scalar
 %   run_time   - Total model run time (years), should be >= t_capture
@@ -34,42 +33,39 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 %   Z_mod      - Modeled elevations at each stream node (m), column vector
 %                length = numel(S.IXgrid)
 %
-% Adapted from Gallen & Fernandez-Blanco (2021) bayes_profiler code.
-% Modified for Hells Canyon drainage capture scenario.
+% Closely follows Gallen & Fernandez-Blanco (2021) bayes_profiler
+% river_incision_forward_model.m, adapted for Hells Canyon two-phase
+% capture scenario.
 %
 % Reference:
 %   Braun & Willett (2013), Geomorphology
 %   Gallen & Fernandez-Blanco (2021), JGR-Earth Surface
 
-%% Map node-indexed inputs to grid-index space
-% S.ix, S.ixc, and S.IXgrid are all linear indices into the DEM grid.
-% We must work in grid space so that indexing with S.ix/S.ixc is valid.
 S_DA = S_DA(:);
-n_grid = max(S.IXgrid);  % size of grid-index space
-
-% Map drainage area from node space to grid space
-DA_grid = zeros(n_grid, 1);
-DA_grid(S.IXgrid) = S_DA;
-
-% Map distances from node space to grid space
-dist_grid = zeros(n_grid, 1);
-dist_grid(S.IXgrid) = S.distance;
-
-% Map K to grid space
-if isscalar(K)
-    K_grid = K * ones(n_grid, 1);
-else
-    K_grid = zeros(n_grid, 1);
-    K_grid(S.IXgrid) = K(:);
-end
 
 %% Compute initial steady-state profile with U_pre
 mn = m / n;
-Z_grid = calculate_z(S, DA_grid, dist_grid, U_pre, K, mn, n);
-Z_grid = check_z(S, Z_grid);
+Z = calculate_z(S, S_DA, U_pre, K, mn, n);
+Z = check_z(S, Z);
 
 %% Prepare the implicit finite-difference solver
-[d, r, Af, dx, outlet_nodes] = fastscape_eroder_data_prep(S, DA_grid, K_grid, m, dist_grid);
+[d, r, Af, dx, outlet_nodes] = fastscape_eroder_data_prep(S, S_DA, K, m);
+
+%% Diagnostic output (first call only)
+persistent diag_printed;
+if isempty(diag_printed)
+    diag_printed = true;
+    fprintf('\n--- Forward Model Diagnostics ---\n');
+    fprintf('  Stream nodes: %d\n', numel(S.IXgrid));
+    fprintf('  Outlet nodes found: %d  (node indices: %s)\n', ...
+        numel(outlet_nodes), mat2str(outlet_nodes(:)'));
+    fprintf('  Outlet elevations in Z: %s\n', ...
+        mat2str(Z(outlet_nodes)', 4));
+    fprintf('  Initial steady-state relief: %.1f m\n', max(Z) - min(Z));
+    fprintf('  dx range: [%.1f, %.1f] m\n', min(dx(dx>0)), max(dx));
+    fprintf('  max(K*A^m): %.2e   min(K*A^m): %.2e\n', max(Af), min(Af));
+    fprintf('--- End Diagnostics ---\n\n');
+end
 
 %% Time-stepping forward model
 n_steps = ceil(run_time / dt);
@@ -84,67 +80,39 @@ for step = 1:n_steps
         U_current = U_post;
     end
 
-    % Apply uplift to stream nodes only
-    Z_grid(S.IXgrid) = Z_grid(S.IXgrid) + U_current * dt;
-
-    % Apply erosion using implicit scheme
-    Z_grid = fastscape_eroder_outlets(Z_grid, n, dt, Af, d, r, dx, ...
+    % Uplift + erosion in one call (matching Gallen's implementation,
+    % which applies uplift and then removes it at outlets to keep them
+    % at base level).
+    Z = fastscape_eroder_outlets(Z, n, dt, Af, d, r, dx, ...
         U_current, outlet_nodes);
+
+    % Ensure river doesn't flow backwards
+    Z = check_z(S, Z);
 end
 
-%% Extract stream node elevations from grid space
-Z_mod = Z_grid(S.IXgrid);
-Z_mod = Z_mod(:);
-
-%% Diagnostic output (printed only for the first call per MATLAB session)
-persistent diag_printed;
-if isempty(diag_printed)
-    diag_printed = true;
-    fprintf('\n--- Forward Model Diagnostics ---\n');
-    fprintf('  Grid size (n_grid): %d\n', n_grid);
-    fprintf('  Stream nodes: %d\n', numel(S.IXgrid));
-    fprintf('  Outlet nodes found: %d  (grid indices: %s)\n', ...
-        numel(outlet_nodes), mat2str(outlet_nodes(:)'));
-    fprintf('  Outlet elevations in Z_mod: %s\n', ...
-        mat2str(Z_grid(outlet_nodes)', 4));
-    % Find which stream-node positions correspond to outlets
-    [outlet_is_stream, outlet_node_pos] = ismember(outlet_nodes, S.IXgrid);
-    fprintf('  Outlets are stream nodes: %s\n', mat2str(outlet_is_stream'));
-    fprintf('  Initial steady-state relief: %.1f m\n', ...
-        max(calculate_z(S, DA_grid, dist_grid, U_pre, K, m/n, n)) - 0);
-    fprintf('  Final model Z range: [%.1f, %.1f] m\n', min(Z_mod), max(Z_mod));
-    fprintf('  Number of time steps: %d  (dt=%.0f yr)\n', n_steps, dt);
-    fprintf('  dx range: [%.1f, %.1f] m\n', min(dx(dx>0)), max(dx));
-    fprintf('  max(K*A^m): %.2e   min(K*A^m): %.2e\n', ...
-        max(Af(S.IXgrid)), min(Af(S.IXgrid)));
-    fprintf('--- End Diagnostics ---\n\n');
-end
+%% Return node-ordered elevations
+Z_mod = Z(:);
 
 end
 
 %% ===================== Helper Functions =====================
 
-function z = calculate_z(S, DA_grid, dist_grid, U, K, mn, n)
+function z = calculate_z(S, S_DA, U, K, mn, n)
 % Calculate steady-state elevation profile using chi integration.
-% Works in grid-index space.
+% All arrays in node space (same length as S.distance).
 
-if isscalar(K)
-    Sa = zeros(size(DA_grid));
-    Sa(S.IXgrid) = (U / K)^(1/n) * (1 ./ DA_grid(S.IXgrid)).^mn;
-else
-    Sa = zeros(size(DA_grid));
-    Sa(S.IXgrid) = (U ./ DA_grid(S.IXgrid)).^(1/n) .* (1 ./ DA_grid(S.IXgrid)).^mn;
-end
+z  = zeros(size(S.distance));
+Sa = (U / K)^(1/n) * (1 ./ S_DA).^mn;
 
-z   = zeros(size(DA_grid));
 Six  = S.ix;
 Sixc = S.ixc;
+Sd   = S.distance;
 
 % Integrate upstream from outlet
 for lp = numel(Six):-1:1
     z(Six(lp)) = z(Sixc(lp)) + ...
         (Sa(Sixc(lp)) + (Sa(Six(lp)) - Sa(Sixc(lp))) / 2) * ...
-        abs(dist_grid(Sixc(lp)) - dist_grid(Six(lp)));
+        abs(Sd(Sixc(lp)) - Sd(Six(lp)));
 end
 
 end
@@ -155,47 +123,59 @@ Six  = S.ix;
 Sixc = S.ixc;
 
 for lp = numel(Six):-1:1
-    if z(Six(lp)) < z(Sixc(lp))
-        z(Six(lp)) = z(Sixc(lp)) + 0.001;
+    if z(Six(lp)) <= z(Sixc(lp))
+        z(Six(lp)) = z(Sixc(lp)) + 0.1;
     end
 end
 
 end
 
-function [d, r, A, dx, outlet_nodes] = fastscape_eroder_data_prep(S, DA_grid, K_grid, m, dist_grid)
+function [d, r, A, dx, outlet_nodes] = fastscape_eroder_data_prep(S, S_DA, K, m)
 % Prepare data structures for the implicit finite difference solver.
-% All arrays are in grid-index space.
+% All arrays in node space.
 
-d  = S.ix;
-r  = S.ixc;
-dx = abs(dist_grid(d) - dist_grid(r));
+d = S.ix;
+r = S.ixc;
 
-% Erosion velocity field: K * A^m (grid-indexed)
-A = K_grid .* DA_grid.^m;
+% Erosion velocity field: K * A^m (node-indexed)
+if isscalar(K)
+    A = K .* S_DA.^m;
+else
+    A = K(:) .* S_DA.^m;
+end
 
-% Find outlet nodes as grid-linear indices.
-% Outlets are nodes that appear as receivers (S.ixc) but never as donors
-% (S.ix).  This is more robust than streampoi, whose 'ix' output format
-% (node-list index vs. grid-linear index) varies across TopoToolbox
-% versions and can silently pin the wrong grid cell to base level.
-outlet_nodes = setdiff(S.ixc, S.ix);
+% Find outlet nodes and convert to node-list indices.
+% S.outlets (or streampoi 'outlets') returns grid-linear indices;
+% convert to positions within S.IXgrid (node indices) following
+% Gallen's fastscape_eroder_data_prep.
+outlet_grid = streampoi(S, 'outlets', 'ix');
+outlet_nodes = zeros(size(outlet_grid));
+for i = 1:length(outlet_grid)
+    outlet_nodes(i) = find(S.IXgrid == outlet_grid(i));
+end
+
+% Distance between donor-receiver pairs
+dx = abs(S.distance(d) - S.distance(r));
 
 end
 
 function S_Z = fastscape_eroder_outlets(S_Z, n, dt, A, d, r, dx, U, outlets)
 % Implicit finite-difference erosion following Braun & Willett (2013).
-% All arrays are in grid-index space.
+% Uplift is applied inside this function (matching Gallen's implementation).
+% Outlets are kept at base level by removing the uplift increment.
 
-% Fix outlet elevations at base level = 0
-for k = 1:length(outlets)
-    S_Z(outlets(k)) = 0;
+% Apply uplift to all nodes
+S_Z = S_Z + dt * U;
+
+% Remove uplift at outlets to maintain base level
+if isscalar(U)
+    S_Z(outlets) = S_Z(outlets) - dt * U;
+else
+    S_Z(outlets) = S_Z(outlets) - dt * U(outlets);
 end
 
-% Erode from downstream to upstream (implicit scheme).
-% TopoToolbox orders S.ix/S.ixc from headwaters (index 1) to outlet
-% (index end), so we iterate backwards to process outlet-to-headwaters,
-% ensuring each downstream node is updated before its upstream donors.
-for j = length(d):-1:1
+% Implicit erosion from downstream to upstream
+for j = numel(d):-1:1
     tt = A(d(j)) * dt / dx(j);
 
     if abs(n - 1) < 1e-6
@@ -203,7 +183,11 @@ for j = length(d):-1:1
         S_Z(d(j)) = (S_Z(d(j)) + S_Z(r(j)) * tt) / (1 + tt);
     else
         % n != 1: Newton-Raphson iteration
-        S_Z(d(j)) = newtonraphson(S_Z(d(j)), S_Z(r(j)), dx(j), tt, n);
+        zt    = S_Z(d(j));
+        ztp1d = S_Z(r(j));
+        if ztp1d < zt
+            S_Z(d(j)) = newtonraphson(zt, ztp1d, dx(j), tt, n);
+        end
     end
 end
 
@@ -211,34 +195,20 @@ end
 
 function ztp1 = newtonraphson(zt, ztp1d, dx, tt, n)
 % Newton-Raphson solver for the implicit stream power equation when n != 1.
+% Matches Gallen's implementation.
 
-ztp1 = zt;
-tol  = 1e-3;
-max_iter = 100;
+tempz = zt;
+tol   = inf;
 
-for iter = 1:max_iter
-    slope = (ztp1 - ztp1d) / dx;
+while tol > 1e-3
+    ztp1 = tempz - (tempz - zt + (tt * dx) * ((tempz - ztp1d) / dx)^n) / ...
+        (1 + n * tt * ((tempz - ztp1d) / dx)^(n-1));
+    tol   = abs(ztp1 - tempz);
+    tempz = ztp1;
+end
 
-    if slope <= 0
-        ztp1 = ztp1d + 0.001;
-        slope = 0.001 / dx;
-    end
-
-    f  = ztp1 - zt + tt * dx * slope^n;
-    fp = 1 + n * tt * slope^(n-1);
-
-    ztp1_new = ztp1 - f / fp;
-
-    if abs(ztp1_new - ztp1) < tol
-        ztp1 = ztp1_new;
-        return;
-    end
-
-    ztp1 = ztp1_new;
-
-    if ztp1 < ztp1d
-        ztp1 = ztp1d + 0.001;
-    end
+if ~isreal(ztp1) || isnan(ztp1)
+    ztp1 = real(ztp1);
 end
 
 end
