@@ -124,24 +124,30 @@ cave_prior.U_post_mean     = 1.25e-4;  % 0.125 mm/yr (midpoint of 0.09-0.16)
 cave_prior.U_post_std      = 3.5e-5;   % +/- 0.035 mm/yr
 
 % --- Starting values (near expected MAP for faster convergence) ---
-% Updated from ksn_erosion_analysis results (Bayesian MAP: K=1.75e-6, n=0.71)
+% Picked from the interior of the posterior region found in previous runs
+% (log10(K) ~ -7 to -8, n ~ 1, m/n ~ 0.55, t_capture ~ 2.2 Ma) so that
+% MCMC doesn't have to climb out of an extreme corner of parameter space.
 params_init = [
-    1e-5,     ... % U_pre = 0.01 mm/yr
-    1.25e-4,  ... % U_post = 0.125 mm/yr
-    -5.76,    ... % log10(K) ~ 1.75e-6 (from ksn Bayesian MAP)
-    0.71,     ... % n = 0.71 (from ksn Bayesian MAP)
-    0.45,     ... % m/n = 0.45
-    2.1e6     ... % t_capture = 2.1 Ma
+    1e-5,     ... % U_pre = 0.01 mm/yr (cave prior mean)
+    1.25e-4,  ... % U_post = 0.125 mm/yr (cave prior mean)
+    -6.0,     ... % log10(K) = 1e-6 (central for n=1, gives sensible relief)
+    1.0,      ... % n = 1 (linear stream power; well-posed baseline)
+    0.5,      ... % m/n = 0.5 (classical concavity)
+    2.1e6     ... % t_capture = 2.1 Ma (cave prior mean)
 ];
 
 % --- MCMC step sizes (tune for ~25-50% acceptance) ---
+% Scaled down from previous run (which got 2.6% acceptance) to improve
+% mixing of the stream-power parameters.  The (log10K, n, m/n) trio has
+% strong correlations that a diagonal proposal handles poorly, so smaller
+% individual steps produce a better-behaved chain.
 p_steps = [
-    3e-6,    ... % U_pre
-    2e-5,    ... % U_post
-    0.1,     ... % log10(K)
-    0.1,     ... % n
-    0.015,   ... % m/n
-    1e5      ... % t_capture (100 kyr steps)
+    2e-6,    ... % U_pre   (tightly constrained by cave prior)
+    1.5e-5,  ... % U_post  (tightly constrained by cave prior)
+    0.05,    ... % log10(K)
+    0.05,    ... % n
+    0.008,   ... % m/n
+    7.5e4    ... % t_capture (75 kyr steps)
 ];
 
 n_params = length(params_init);

@@ -45,10 +45,17 @@ if ~isempty(obs_cave) && ~isempty(mod_cave)
     % Moderate balancing: scale stream logL so that the *effective* number
     % of stream data points equals a user-tunable target.  This preserves
     % enough stream weight to constrain K/n/m-n while letting cave data
-    % contribute.  Default N_eff = 50 (i.e., treat the stream profile as
-    % ~50 independent constraints rather than 5000+ correlated nodes).
+    % contribute.
+    %
+    % For a river profile with strong spatial autocorrelation (node
+    % spacing ~30 m, autocorrelation length of hundreds of meters), a
+    % reasonable effective count is n_stream / 30 to n_stream / 60.  For
+    % ~5000 nodes that is ~80-170 independent constraints.  We use
+    % N_eff_stream = 100 which pushes a bit harder on the stream-power
+    % parameters than the previous value of 50 without over-weighting
+    % correlated noise.
     n_stream = length(obs_stream);
-    N_eff_stream = 50;  % effective independent stream constraints
+    N_eff_stream = 100;  % effective independent stream constraints
     Ws = N_eff_stream / n_stream;
 
     logL = Ws * logL_stream + logL_cave;
