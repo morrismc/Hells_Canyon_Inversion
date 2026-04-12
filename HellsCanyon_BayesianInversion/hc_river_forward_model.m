@@ -1,14 +1,19 @@
-function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
-    t_capture, K, m, n, run_time, dt)
+function [Z_mod] = hc_river_forward_model(S, S_DA, U_rates, ...
+    t_transitions, K, m, n, dt)
 % HC_RIVER_FORWARD_MODEL  Forward model for river incision following
 % drainage capture in Hells Canyon.
 %
 % Solves the stream power incision model:
 %   dz/dt = U(t) - K * A^m * |dz/dx|^n
 %
-% Two-phase tectonic scenario:
-%   Phase 1 (t < t_capture): Uniform incision at rate U_pre
-%   Phase 2 (t >= t_capture): Uniform incision at rate U_post
+% Multi-phase tectonic scenario (general):
+%   Phase 1 (oldest):  t > t_transitions(1),  rate = U_rates(1)
+%   Phase 2:           t_transitions(1) > t > t_transitions(2), rate = U_rates(2)
+%   ...
+%   Phase N (present):  t < t_transitions(end), rate = U_rates(end)
+%
+% The model starts from a steady-state profile under U_rates(1), then
+% steps through each subsequent phase to the present.
 %
 % Uses the implicit finite difference scheme of Braun & Willett (2013)
 % with Newton-Raphson iteration for n != 1.
@@ -18,37 +23,37 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 % into the stream-node list, not into the DEM grid.
 %
 % Inputs:
-%   S          - TopoToolbox STREAMobj
-%   S_DA       - Drainage area at each stream node (m^2), vector (N nodes)
-%   U_pre      - Pre-capture incision/uplift rate (m/yr), scalar
-%   U_post     - Post-capture incision/uplift rate (m/yr), scalar
-%   t_capture  - Time of capture event (years before present)
-%   K          - Erodibility coefficient, scalar or vector (N nodes)
-%   m          - Drainage area exponent, scalar
-%   n          - Slope exponent, scalar
-%   run_time   - (Retained for backwards compatibility; not used.  The
-%                model always starts at the U_pre steady state and
-%                time-steps only through the post-capture transient of
-%                duration t_capture.)
-%   dt         - Time step (years)
+%   S              - TopoToolbox STREAMobj
+%   S_DA           - Drainage area at each stream node (m^2), vector
+%   U_rates        - Vector of uplift rates from oldest to youngest (m/yr).
+%                    For 2-phase: [U_pre, U_post].
+%                    For 3-phase: [U_pre, U_mid, U_post].
+%   t_transitions  - Transition times in years BP, strictly decreasing.
+%                    For 2-phase: [t_capture].
+%                    For 3-phase: [t1, t2]  where t1 > t2.
+%   K              - Erodibility coefficient, scalar or vector (N nodes)
+%   m              - Drainage area exponent, scalar
+%   n              - Slope exponent, scalar
+%   dt             - Time step (years)
 %
 % Outputs:
-%   Z_mod      - Modeled elevations at each stream node (m), column vector
-%                length = numel(S.IXgrid)
+%   Z_mod          - Modeled elevations at each stream node (m), column vector
 %
 % Closely follows Gallen & Fernandez-Blanco (2021) bayes_profiler
-% river_incision_forward_model.m, adapted for Hells Canyon two-phase
-% capture scenario.
+% river_incision_forward_model.m, extended for multi-phase capture
+% scenario.
 %
 % Reference:
 %   Braun & Willett (2013), Geomorphology
 %   Gallen & Fernandez-Blanco (2021), JGR-Earth Surface
 
 S_DA = S_DA(:);
+U_rates = U_rates(:)';
+t_transitions = t_transitions(:)';
 
-%% Compute initial steady-state profile with U_pre
+%% Compute initial steady-state profile with the oldest (background) rate
 mn = m / n;
-Z = calculate_z(S, S_DA, U_pre, K, mn, n);
+Z = calculate_z(S, S_DA, U_rates(1), K, mn, n);
 Z = check_z(S, Z);
 
 %% Prepare the implicit finite-difference solver
@@ -60,6 +65,9 @@ if isempty(diag_printed)
     diag_printed = true;
     fprintf('\n--- Forward Model Diagnostics ---\n');
     fprintf('  Stream nodes: %d\n', numel(S.IXgrid));
+    fprintf('  Uplift phases: %d  (rates: %s m/yr)\n', ...
+        length(U_rates), mat2str(U_rates, 4));
+    fprintf('  Transition times: %s yr BP\n', mat2str(t_transitions));
     fprintf('  Outlet nodes found: %d  (node indices: %s)\n', ...
         numel(outlet_nodes), mat2str(outlet_nodes(:)'));
     fprintf('  Outlet elevations in Z: %s\n', ...
@@ -70,20 +78,19 @@ if isempty(diag_printed)
     fprintf('--- End Diagnostics ---\n\n');
 end
 
-%% Time-stepping forward model
-% The initial profile is already at U_pre steady state, so we only need
-% to time-step through the post-capture transient of duration t_capture.
-% This is both more efficient and avoids numerical drift from hundreds of
-% unnecessary "steady state" time steps.  (run_time is retained as an
-% argument for backwards compatibility but is no longer used.)
-n_steps_post = ceil(t_capture / dt);
+%% Time-stepping: march through each phase from oldest to present
+% t_bounds marks the interval endpoints: [t1, t2, ..., 0]
+t_bounds = [t_transitions, 0];
 
-for step = 1:n_steps_post
-    % Uplift + erosion in one call (matching Gallen's implementation,
-    % which applies uplift and then removes it at outlets to keep them
-    % at base level).
-    Z = fastscape_eroder_outlets(Z, n, dt, Af, d, r, dx, ...
-        U_post, outlet_nodes);
+for phase = 2:length(U_rates)
+    duration = t_bounds(phase - 1) - t_bounds(phase);
+    n_steps  = max(1, ceil(duration / dt));
+    dt_phase = duration / n_steps;   % keep exact duration
+
+    for step = 1:n_steps
+        Z = fastscape_eroder_outlets(Z, n, dt_phase, Af, d, r, dx, ...
+            U_rates(phase), outlet_nodes);
+    end
 end
 
 % Final safety check (no-op if the implicit solver behaved correctly)
@@ -144,9 +151,6 @@ else
 end
 
 % Find outlet nodes and convert to node-list indices.
-% S.outlets (or streampoi 'outlets') returns grid-linear indices;
-% convert to positions within S.IXgrid (node indices) following
-% Gallen's fastscape_eroder_data_prep.
 outlet_grid = streampoi(S, 'outlets', 'ix');
 outlet_nodes = zeros(size(outlet_grid));
 for i = 1:length(outlet_grid)
@@ -210,17 +214,13 @@ it      = 0;
 while tol > 1e-3 && it < max_it
     it = it + 1;
 
-    % Ensure the base of the power is strictly positive to keep the
-    % iterate real-valued.  If tempz drifts to or below ztp1d, the scheme
-    % is physically trying to make the donor equal or lower than the
-    % receiver, so clamp just above ztp1d.
     dz_dx = (tempz - ztp1d) / dx;
     if dz_dx <= 0
         tempz = ztp1d + 1e-3;
         dz_dx = 1e-3 / dx;
     end
 
-    f_val  = tempz - zt + (tt * dx) * dz_dx^n;
+    f_val   = tempz - zt + (tt * dx) * dz_dx^n;
     f_prime = 1 + n * tt * dz_dx^(n - 1);
 
     ztp1  = tempz - f_val / f_prime;
@@ -228,9 +228,6 @@ while tol > 1e-3 && it < max_it
     tempz = ztp1;
 end
 
-% Fallback: if Newton-Raphson misbehaved, return the clamped donor
-% elevation just above the receiver.  This preserves monotonicity
-% and keeps the forward model numerically stable.
 if ~isreal(ztp1) || isnan(ztp1) || isinf(ztp1) || ztp1 < ztp1d
     ztp1 = max(real(ztp1), ztp1d + 1e-3);
 end

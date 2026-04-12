@@ -2,30 +2,32 @@
 % cave burial ages for Hells Canyon drainage capture timing.
 %
 % Adapted from Gallen & Fernandez-Blanco (2021) bayes_profiler.
-% Estimates stream power parameters (K, n, m/n) and capture timing
-% simultaneously using Metropolis-Hastings MCMC.
+% Estimates stream power parameters (K, n, m/n) and a multi-phase
+% incision history using Metropolis-Hastings MCMC.
 %
-% Two-phase tectonic model:
+% Three-phase tectonic model:
 %   Phase 1: Pre-capture slow incision at rate U_pre
-%   Phase 2: Post-capture rapid incision at rate U_post
-%   Transition at time t_capture (years before present)
+%   Phase 2: Post-capture intermediate rate U_mid   (t1 -> t2)
+%   Phase 3: Most recent rapid incision at rate U_post (t2 -> present)
 %
 % Data constraints:
 %   (1) River profile elevations from tributary DEMs
 %   (2) Cave burial ages and heights above modern river
 %
 % Cave-derived priors from Morriss et al. (2025) PNAS:
-%   t_capture ~ 2.1 +/- 1.0 Ma
-%   U_pre     ~ 0.01 mm/yr (background rate from upper caves)
-%   U_post    ~ 0.09-0.16 mm/yr (from lower caves)
+%   t1 ~ 2.1 +/- 1.0 Ma  (first acceleration / capture event)
+%   U_pre  ~ 0.01 mm/yr   (background rate from upper caves)
+%   U_post ~ 0.09-0.16 mm/yr (from lower caves)
 %
-% Parameters estimated [6 total]:
-%   (1) U_pre      - Pre-capture incision rate (m/yr)
-%   (2) U_post     - Post-capture incision rate (m/yr)
-%   (3) log10(K)   - Log-erodibility
-%   (4) n          - Slope exponent
-%   (5) m/n        - Concavity ratio
-%   (6) t_capture  - Capture timing (years)
+% Parameters estimated [8 total]:
+%   (1) U_pre    - Pre-capture incision rate (m/yr)
+%   (2) U_mid    - Intermediate incision rate (m/yr)
+%   (3) U_post   - Most recent incision rate (m/yr)
+%   (4) log10(K) - Log-erodibility
+%   (5) n        - Slope exponent
+%   (6) m/n      - Concavity ratio
+%   (7) t1       - Older transition time (years BP)
+%   (8) t2       - Younger transition time (years BP)
 %
 % Required files on MATLAB path:
 %   hc_river_forward_model.m
@@ -47,107 +49,106 @@ clear; close all; clc;
 %  ========================================================================
 
 % --- File paths ---
-% Stream data: either pre-extracted .mat or DEM file
-% If using prepare_hc_stream_data.m, point to the output .mat file
-stream_data_file = 'C:\Users\mmorriss\Desktop\Side_projects\Hells_Canyon_Inversion\HellsCanyon_BayesianInversion\hc_stream_data.mat';  % <-- UPDATE: path to hc_stream_data.mat
+stream_data_file = 'C:\Users\mmorriss\Desktop\Side_projects\Hells_Canyon_Inversion\HellsCanyon_BayesianInversion\hc_stream_data.mat';
 
 % Output tag for saving results
-fileTag = 'HC_capture';
+fileTag = 'HC_capture_3phase';
 
 % Output directory
-output_dir = pwd;  % <-- UPDATE if desired
+output_dir = pwd;
 
 % --- Cave Data ---
 % Cave burial ages (years before present) and heights above modern river (m)
 % From Morriss et al. (2025) PNAS
-% Format: [age_yr, height_m, age_uncertainty_yr, height_uncertainty_m]
-%
-% UPDATE THESE WITH YOUR ACTUAL CAVE DATA:
-% Example values based on published constraints:
 cave_data = [
     1.5e6,   242,  0.73e6,  20;   % Youngest cave (rapid incision phase)
     2.71e6,  343,  1.4e6,   20;   % Middle cave
     5.5e6,   375,  3.8e6,   20;   % Oldest cave (high, slow incision phase)
 ];
-% Column 1: burial age (years)
-% Column 2: height above modern river (m)
-% Column 3: 1-sigma age uncertainty (years)
-% Column 4: 1-sigma height uncertainty (m)
 
 cave_ages       = cave_data(:,1);
 cave_heights    = cave_data(:,2);
 cave_age_err    = cave_data(:,3);
 cave_height_err = cave_data(:,4);
 
-% --- Whether to use cave data as PRIORS (informative) or just LIKELIHOOD ---
-use_informative_priors = true;  % true = Gaussian priors from caves on timing/rates
+% --- Whether to use cave data as PRIORS (informative) ---
+use_informative_priors = true;
 
 % --- MCMC Settings ---
-n_burnin   = 1e4;    % Burn-in iterations (increase for production: 3e5)
-n_postburn = 1e5;    % Post-burn-in iterations (increase for production: 3e6)
+n_burnin   = 2e4;    % Burn-in iterations (increase for production)
+n_postburn = 1e5;    % Post-burn-in iterations (increase for production)
 dt_forward = 25000;  % Forward model time step (years)
-
-% --- Run time for forward model ---
-% Should be long enough to capture the full pre-capture steady state
-run_time = 10e6;  % 10 Ma (generous to allow pre-capture equilibrium)
 
 %% ========================================================================
 %  SECTION 2: PARAMETER SETUP
 %  ========================================================================
 
-% Parameter ordering:
-% [1] U_pre     - Pre-capture incision rate (m/yr)
-% [2] U_post    - Post-capture incision rate (m/yr)
-% [3] log10(K)  - Log-erodibility
-% [4] n         - Slope exponent
-% [5] m/n       - Concavity ratio (theta)
-% [6] t_capture - Capture timing (years before present)
+% Parameter ordering [8 total]:
+% [1] U_pre    - Pre-capture incision rate (m/yr)
+% [2] U_mid    - Intermediate incision rate (m/yr)
+% [3] U_post   - Most recent incision rate (m/yr)
+% [4] log10(K) - Log-erodibility
+% [5] n        - Slope exponent
+% [6] m/n      - Concavity ratio (theta)
+% [7] t1       - Older transition time (years BP)
+% [8] t2       - Younger transition time (years BP), t2 < t1
 
-% --- Prior bounds (uniform) ---
+% --- Prior bounds (uniform hard walls) ---
 prior_bounds = [
-    1e-6,   5e-4;     % U_pre:     ~0.001 to 0.5 mm/yr
-    1e-5,   5e-3;     % U_post:    ~0.01 to 5 mm/yr
-    -9,     -4;       % log10(K):  wide range
-    0.5,    10;       % n:         0.5 to 10 (allow high n like Gallen found)
-    0.3,    0.7;      % m/n:       typical concavity range
-    0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
+    1e-6,   5e-4;     % U_pre:    ~0.001 to 0.5 mm/yr
+    1e-5,   5e-3;     % U_mid:    ~0.01 to 5 mm/yr
+    1e-5,   5e-3;     % U_post:   ~0.01 to 5 mm/yr
+    -9,     -4;       % log10(K): wide range
+    0.5,    3;        % n:        0.5 to 3 (physically motivated upper bound)
+    0.3,    0.7;      % m/n:      typical concavity range
+    0.5e6,  7e6;      % t1:       0.5 to 7 Ma
+    0.1e6,  5e6;      % t2:       0.1 to 5 Ma (must be < t1)
 ];
 
 % --- Informative priors from cave constraints ---
 cave_prior = struct();
 cave_prior.use_informative = use_informative_priors;
-cave_prior.t_capture_mean  = 2.1e6;    % 2.1 Ma from PNAS paper
-cave_prior.t_capture_std   = 1.0e6;    % +/- 1.0 Ma
-cave_prior.U_pre_mean      = 1e-5;     % 0.01 mm/yr
-cave_prior.U_pre_std       = 5e-6;     % +/- 0.005 mm/yr
-cave_prior.U_post_mean     = 1.25e-4;  % 0.125 mm/yr (midpoint of 0.09-0.16)
-cave_prior.U_post_std      = 3.5e-5;   % +/- 0.035 mm/yr
 
-% --- Starting values (near expected MAP for faster convergence) ---
-% Picked from the interior of the posterior region found in previous runs
-% (log10(K) ~ -7 to -8, n ~ 1, m/n ~ 0.55, t_capture ~ 2.2 Ma) so that
-% MCMC doesn't have to climb out of an extreme corner of parameter space.
+% Priors on t1 (the main capture event from cave burial dating)
+cave_prior.t1_mean      = 2.1e6;    % 2.1 Ma from PNAS paper
+cave_prior.t1_std        = 1.0e6;    % +/- 1.0 Ma
+
+% Background incision rate from pre-capture caves
+cave_prior.U_pre_mean   = 1e-5;     % 0.01 mm/yr
+cave_prior.U_pre_std    = 5e-6;     % +/- 0.005 mm/yr
+
+% Most-recent incision rate from post-capture cave constraints
+cave_prior.U_post_mean  = 1.5e-4;   % 0.15 mm/yr
+cave_prior.U_post_std   = 5e-5;     % +/- 0.05 mm/yr (loosened for 3-phase)
+
+% Gaussian prior on n to break the K-n trade-off.
+% Most landscape evolution studies find n in [0.5, 2]; n=1 is the standard.
+cave_prior.n_mean       = 1.0;
+cave_prior.n_std        = 0.5;
+
+% --- Starting values ---
 params_init = [
-    1e-5,     ... % U_pre = 0.01 mm/yr (cave prior mean)
-    1.25e-4,  ... % U_post = 0.125 mm/yr (cave prior mean)
-    -6.0,     ... % log10(K) = 1e-6 (central for n=1, gives sensible relief)
-    1.0,      ... % n = 1 (linear stream power; well-posed baseline)
-    0.5,      ... % m/n = 0.5 (classical concavity)
-    2.1e6     ... % t_capture = 2.1 Ma (cave prior mean)
+    1e-5,     ... % U_pre  = 0.01 mm/yr
+    8e-5,     ... % U_mid  = 0.08 mm/yr (intermediate)
+    1.5e-4,   ... % U_post = 0.15 mm/yr
+    -6.0,     ... % log10(K) = 1e-6
+    1.0,      ... % n = 1 (linear stream power)
+    0.5,      ... % m/n = 0.5
+    3.0e6,    ... % t1 = 3.0 Ma (older transition)
+    1.0e6     ... % t2 = 1.0 Ma (younger transition)
 ];
 
-% --- MCMC step sizes (tune for ~25-50% acceptance) ---
-% Scaled down from previous run (which got 2.6% acceptance) to improve
-% mixing of the stream-power parameters.  The (log10K, n, m/n) trio has
-% strong correlations that a diagonal proposal handles poorly, so smaller
-% individual steps produce a better-behaved chain.
+% --- MCMC step sizes ---
+% Smaller steps for better acceptance with 8 parameters.
 p_steps = [
     2e-6,    ... % U_pre   (tightly constrained by cave prior)
-    1.5e-5,  ... % U_post  (tightly constrained by cave prior)
-    0.05,    ... % log10(K)
-    0.05,    ... % n
-    0.008,   ... % m/n
-    7.5e4    ... % t_capture (75 kyr steps)
+    8e-6,    ... % U_mid
+    1.5e-5,  ... % U_post
+    0.04,    ... % log10(K)
+    0.04,    ... % n
+    0.006,   ... % m/n
+    1.5e5,   ... % t1 (150 kyr steps)
+    1e5      ... % t2 (100 kyr steps)
 ];
 
 n_params = length(params_init);
@@ -166,20 +167,17 @@ if ~isempty(stream_data_file) && exist(stream_data_file, 'file')
     end
 
     S    = sd.S;
-    Sz   = sd.Sz(:);    % force column vector
-    S_DA = sd.S_DA(:);  % force column vector
+    Sz   = sd.Sz(:);
+    S_DA = sd.S_DA(:);
 
     % Validate that node counts are consistent
     n_nodes = numel(S.IXgrid);
     if length(Sz) ~= n_nodes
         warning('Sz (%d) and S.IXgrid (%d) have different lengths. Re-extracting from S.', ...
             length(Sz), n_nodes);
-        % S_DA and Sz may have been extracted from a different STREAMobj.
-        % Re-extract if the loaded S has the right fields.
         if isfield(sd, 'DEM') && isa(sd.DEM, 'GRIDobj')
             Sz   = double(sd.DEM.Z(S.IXgrid));
         else
-            % Truncate or pad to match S node count
             Sz = Sz(1:min(length(Sz), n_nodes));
             if length(Sz) < n_nodes
                 error('Cannot reconcile Sz length with S: %d vs %d nodes', length(Sz), n_nodes);
@@ -197,10 +195,6 @@ if ~isempty(stream_data_file) && exist(stream_data_file, 'file')
 else
     fprintf('WARNING: No stream data file specified.\n');
     fprintf('Please run prepare_hc_stream_data.m first to create hc_stream_data.mat\n');
-    fprintf('Then set stream_data_file at the top of this script.\n');
-    fprintf('\nExample:\n');
-    fprintf('  sd = prepare_hc_stream_data(''path/to/Basin_80_Data.mat'');\n');
-    fprintf('  % Then set stream_data_file = ''hc_stream_data.mat'';\n');
     return;
 end
 
@@ -208,10 +202,7 @@ end
 Sz_norm = Sz - min(Sz);
 
 % Stream data error (meters)
-% Should reflect model inadequacy (uniform K, simple two-phase uplift),
-% not just DEM noise.  The model can't match every node, so this is the
-% expected per-node RMS residual at a good fit (~10-15% of total relief).
-stream_err = 200;  % m; tune: lower = tighter fit, higher = more exploration
+stream_err = 200;  % reflects model inadequacy
 n_stream = length(Sz_norm);
 n_cave   = length(cave_ages);
 
@@ -232,16 +223,18 @@ accepted    = zeros(total_iter, 1);
 params(1,:) = params_init;
 
 % Run initial forward model
-K_init = 10^params_init(3);
-m_init = params_init(5) * params_init(4);  % m = (m/n) * n
+K_init = 10^params_init(4);
+m_init = params_init(6) * params_init(5);  % m = (m/n) * n
+
+U_rates_init = [params_init(1), params_init(2), params_init(3)];
+t_trans_init = [params_init(7), params_init(8)];
 
 fprintf('Running initial forward model...\n');
-Z_mod = hc_river_forward_model(S, S_DA, params_init(1), params_init(2), ...
-    params_init(6), K_init, m_init, params_init(4), run_time, dt_forward);
+Z_mod = hc_river_forward_model(S, S_DA, U_rates_init, t_trans_init, ...
+    K_init, m_init, params_init(5), dt_forward);
 
 % Initial cave predictions
-cave_pred = cave_forward_model(cave_ages, params_init(6), ...
-    params_init(1), params_init(2));
+cave_pred = cave_forward_model(cave_ages, U_rates_init, t_trans_init);
 
 % Initial likelihood
 [logL_init, ~, ~] = hc_loglikelihood(Sz_norm, Z_mod, ...
@@ -258,7 +251,7 @@ cave_pred_map = cave_pred;
 
 fprintf('Initial log-likelihood: %.2f\n', logL_init);
 
-% --- Diagnostics: compare initial model to observations ---
+% --- Diagnostics ---
 fprintf('\n--- Initial Model vs Observations ---\n');
 fprintf('  Observed elevation range: [%.1f, %.1f] m  (relief = %.1f m)\n', ...
     min(Sz_norm), max(Sz_norm), max(Sz_norm) - min(Sz_norm));
@@ -317,15 +310,17 @@ for i = 2:total_iter
     lp_current = logprior_hc(current, prior_bounds, cave_prior);
 
     % Run forward model with candidate parameters
-    K_cand = 10^candidate(3);
-    m_cand = candidate(5) * candidate(4);  % m = (m/n) * n
+    K_cand = 10^candidate(4);
+    m_cand = candidate(6) * candidate(5);  % m = (m/n) * n
+
+    U_rates_cand = [candidate(1), candidate(2), candidate(3)];
+    t_trans_cand = [candidate(7), candidate(8)];
 
     try
-        Z_cand = hc_river_forward_model(S, S_DA, candidate(1), candidate(2), ...
-            candidate(6), K_cand, m_cand, candidate(4), run_time, dt_forward);
+        Z_cand = hc_river_forward_model(S, S_DA, U_rates_cand, ...
+            t_trans_cand, K_cand, m_cand, candidate(5), dt_forward);
 
-        cave_cand = cave_forward_model(cave_ages, candidate(6), ...
-            candidate(1), candidate(2));
+        cave_cand = cave_forward_model(cave_ages, U_rates_cand, t_trans_cand);
 
         % Likelihood
         [logL_cand, ~, ~] = hc_loglikelihood(Sz_norm, Z_cand, ...
@@ -383,9 +378,10 @@ params_post = params(n_burnin+1:end, :);
 logL_post   = logL_chain(n_burnin+1:end);
 
 % Compute statistics
-param_names = {'U_{pre} (m/yr)', 'U_{post} (m/yr)', 'log_{10}(K)', ...
-               'n', 'm/n', 't_{capture} (yr)'};
-param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];  % for display (mm/yr, mm/yr, -, -, -, Ma)
+param_names = {'U_{pre} (m/yr)', 'U_{mid} (m/yr)', 'U_{post} (m/yr)', ...
+               'log_{10}(K)', 'n', 'm/n', 't_1 (yr)', 't_2 (yr)'};
+param_scale = [1e3, 1e3, 1e3, 1, 1, 1, 1e-6, 1e-6];
+%               mm/yr mm/yr mm/yr  -  -  -  Ma    Ma
 
 fprintf('\n========== POSTERIOR SUMMARY ==========\n');
 fprintf('%-20s %12s %12s %20s %20s\n', 'Parameter', 'MAP', 'Median', '68% CI', '95% CI');
@@ -402,7 +398,7 @@ for j = 1:n_params
 end
 
 % K in real space
-K_post = 10.^params_post(:,3);
+K_post = 10.^params_post(:,4);
 fprintf('\nK (real space): median = %.2e, 68%% CI = [%.2e, %.2e]\n', ...
     median(K_post), prctile(K_post, 16), prctile(K_post, 84));
 
