@@ -26,7 +26,10 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_pre, U_post, ...
 %   K          - Erodibility coefficient, scalar or vector (N nodes)
 %   m          - Drainage area exponent, scalar
 %   n          - Slope exponent, scalar
-%   run_time   - Total model run time (years), should be >= t_capture
+%   run_time   - (Retained for backwards compatibility; not used.  The
+%                model always starts at the U_pre steady state and
+%                time-steps only through the post-capture transient of
+%                duration t_capture.)
 %   dt         - Time step (years)
 %
 % Outputs:
@@ -68,27 +71,23 @@ if isempty(diag_printed)
 end
 
 %% Time-stepping forward model
-n_steps = ceil(run_time / dt);
+% The initial profile is already at U_pre steady state, so we only need
+% to time-step through the post-capture transient of duration t_capture.
+% This is both more efficient and avoids numerical drift from hundreds of
+% unnecessary "steady state" time steps.  (run_time is retained as an
+% argument for backwards compatibility but is no longer used.)
+n_steps_post = ceil(t_capture / dt);
 
-for step = 1:n_steps
-    current_time = step * dt;
-    time_bp = run_time - current_time;
-
-    if time_bp >= t_capture
-        U_current = U_pre;
-    else
-        U_current = U_post;
-    end
-
+for step = 1:n_steps_post
     % Uplift + erosion in one call (matching Gallen's implementation,
     % which applies uplift and then removes it at outlets to keep them
     % at base level).
     Z = fastscape_eroder_outlets(Z, n, dt, Af, d, r, dx, ...
-        U_current, outlet_nodes);
-
-    % Ensure river doesn't flow backwards
-    Z = check_z(S, Z);
+        U_post, outlet_nodes);
 end
+
+% Final safety check (no-op if the implicit solver behaved correctly)
+Z = check_z(S, Z);
 
 %% Return node-ordered elevations
 Z_mod = Z(:);
@@ -154,8 +153,12 @@ for i = 1:length(outlet_grid)
     outlet_nodes(i) = find(S.IXgrid == outlet_grid(i));
 end
 
-% Distance between donor-receiver pairs
+% Distance between donor-receiver pairs.  Guard against the rare case
+% where two consecutive stream nodes end up at identical distance
+% values (which would produce tt = A*dt/dx = Inf in the solver).
 dx = abs(S.distance(d) - S.distance(r));
+dx_min = eps(max(S.distance)) * 10;
+dx(dx < dx_min) = dx_min;
 
 end
 
@@ -195,20 +198,41 @@ end
 
 function ztp1 = newtonraphson(zt, ztp1d, dx, tt, n)
 % Newton-Raphson solver for the implicit stream power equation when n != 1.
-% Matches Gallen's implementation.
+% Matches Gallen's implementation but with a max-iteration safeguard and
+% clamping to prevent tempz from dropping below the receiver (which would
+% make ((tempz-ztp1d)/dx)^n complex for non-integer n).
 
-tempz = zt;
-tol   = inf;
+tempz   = zt;
+tol     = inf;
+max_it  = 50;
+it      = 0;
 
-while tol > 1e-3
-    ztp1 = tempz - (tempz - zt + (tt * dx) * ((tempz - ztp1d) / dx)^n) / ...
-        (1 + n * tt * ((tempz - ztp1d) / dx)^(n-1));
+while tol > 1e-3 && it < max_it
+    it = it + 1;
+
+    % Ensure the base of the power is strictly positive to keep the
+    % iterate real-valued.  If tempz drifts to or below ztp1d, the scheme
+    % is physically trying to make the donor equal or lower than the
+    % receiver, so clamp just above ztp1d.
+    dz_dx = (tempz - ztp1d) / dx;
+    if dz_dx <= 0
+        tempz = ztp1d + 1e-3;
+        dz_dx = 1e-3 / dx;
+    end
+
+    f_val  = tempz - zt + (tt * dx) * dz_dx^n;
+    f_prime = 1 + n * tt * dz_dx^(n - 1);
+
+    ztp1  = tempz - f_val / f_prime;
     tol   = abs(ztp1 - tempz);
     tempz = ztp1;
 end
 
-if ~isreal(ztp1) || isnan(ztp1)
-    ztp1 = real(ztp1);
+% Fallback: if Newton-Raphson misbehaved, return the clamped donor
+% elevation just above the receiver.  This preserves monotonicity
+% and keeps the forward model numerically stable.
+if ~isreal(ztp1) || isnan(ztp1) || isinf(ztp1) || ztp1 < ztp1d
+    ztp1 = max(real(ztp1), ztp1d + 1e-3);
 end
 
 end

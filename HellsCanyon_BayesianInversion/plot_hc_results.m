@@ -179,29 +179,72 @@ sgtitle(sprintf('Parameter Posteriors: %s', fileTag), 'FontSize', 14);
 saveas(fig2, fullfile(output_dir, ['posteriors_' fileTag '.png']));
 
 %% Figure 3: Model Fit
-fig3 = figure('Position', [150, 150, 1200, 600]);
+fig3 = figure('Position', [150, 150, 1600, 700]);
 
-% River profile fit
-subplot(1,2,1)
+% Identify trunk stream nodes so we can visualize the knickpoint along
+% the main stem separately from the noisy cloud of tributary nodes.
+try
+    S_trunk_obj = trunk(klargestconncomps(S, 1));
+    [~, trunk_node_idx] = ismember(S_trunk_obj.IXgrid, S.IXgrid);
+    trunk_node_idx = trunk_node_idx(trunk_node_idx > 0);
+catch
+    trunk_node_idx = [];
+end
+
+% River profile fit in tau space (all nodes)
+subplot(1,3,1)
 if nargin >= 18 && ~isempty(S_DA)
     Stau_map = compute_tau_from_chi(S, S_DA, params_map);
 else
     Stau_map = [];
 end
 if ~isempty(Stau_map)
-    plot(Stau_map / 1e6, Sz_obs, '.', 'Color', [0.7 0.7 0.7], 'MarkerSize', 3); hold on
-    plot(Stau_map / 1e6, Z_mod_map, 'k.', 'MarkerSize', 3);
+    plot(Stau_map / 1e6, Sz_obs, '.', 'Color', [0.75 0.75 0.75], ...
+        'MarkerSize', 3); hold on
+    plot(Stau_map / 1e6, Z_mod_map, '.', 'Color', [0.2 0.2 0.2], ...
+        'MarkerSize', 3);
     xlabel('\tau (Ma)'); ylabel('Elevation (m)');
 else
-    plot(Sz_obs, '.', 'Color', [0.7 0.7 0.7], 'MarkerSize', 3); hold on
-    plot(Z_mod_map, 'k.', 'MarkerSize', 3);
+    plot(Sz_obs, '.', 'Color', [0.75 0.75 0.75], 'MarkerSize', 3); hold on
+    plot(Z_mod_map, '.', 'Color', [0.2 0.2 0.2], 'MarkerSize', 3);
     xlabel('Node index'); ylabel('Elevation (m)');
 end
-legend('Observed', 'MAP Model', 'Location', 'northwest');
-title('River Profile Fit');
+% Mark t_capture as a vertical line in tau space.  In a uniform-K
+% transient model the knickpoint is at tau = t_capture.
+try
+    xline(params_map(6) / 1e6, 'b--', sprintf('\\tau = t_{cap}'), ...
+        'LineWidth', 1.5, 'FontSize', 9);
+catch
+end
+legend('Observed (all nodes)', 'MAP model (all nodes)', ...
+    'Location', 'northwest');
+title('River Profile Fit (\tau space, all nodes)');
+grid on
+
+% Trunk-stream profile in along-river distance (shows the knickpoint
+% clearly, without the tributary scatter).
+subplot(1,3,2)
+if ~isempty(trunk_node_idx)
+    x_trunk = S.distance(trunk_node_idx);
+    [~, idx_sort] = sort(x_trunk, 'descend');  % outlet-to-headwater
+    x_plot = (max(x_trunk) - x_trunk(idx_sort)) / 1e3;  % km from outlet
+
+    plot(x_plot, Sz_obs(trunk_node_idx(idx_sort)), '-', ...
+        'Color', [0.3 0.5 0.8], 'LineWidth', 1.5); hold on
+    plot(x_plot, Z_mod_map(trunk_node_idx(idx_sort)), '-', ...
+        'Color', [0.85 0.2 0.2], 'LineWidth', 1.5);
+    xlabel('Distance from outlet (km)'); ylabel('Elevation (m)');
+    legend('Observed trunk', 'MAP model trunk', 'Location', 'northwest');
+    title('Trunk Profile');
+    grid on
+else
+    text(0.5, 0.5, 'Trunk extraction unavailable', ...
+        'HorizontalAlignment', 'center', 'Units', 'normalized');
+    title('Trunk Profile');
+end
 
 % Cave fit
-subplot(1,2,2)
+subplot(1,3,3)
 errorbar(cave_ages / 1e6, cave_heights, cave_height_err, 'bo', ...
     'MarkerSize', 8, 'MarkerFaceColor', [0.3 0.6 0.9], 'LineWidth', 1.5);
 hold on
