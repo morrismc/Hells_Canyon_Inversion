@@ -83,6 +83,17 @@ n_burnin   = 1e4;    % Burn-in iterations (increase for production)
 n_postburn = 1e5;    % Post-burn-in iterations (increase for production)
 dt_forward = 25000;  % Forward model time step (years)
 
+% --- Adaptive proposal tuning (Gallen-style, burn-in ONLY) ---
+% Gallen & Fernandez-Blanco (2021) scale the random-walk step sizes during
+% burn-in to drive the acceptance rate into the efficient Metropolis range.
+% Steps are FROZEN once burn-in ends so the post-burn-in chain is a proper
+% stationary Markov chain (adapting during sampling would break detailed
+% balance).  This directly addresses chains that get stuck at low
+% acceptance with fixed step sizes.
+adapt_steps   = true;   % enable burn-in step-size tuning
+tune_interval = 200;    % iterations between step-size updates
+target_accept = 0.30;   % target acceptance rate (optimal ~0.23-0.44)
+
 %% ========================================================================
 %  SECTION 2: PARAMETER SETUP
 %  ========================================================================
@@ -273,7 +284,9 @@ fprintf('\nStarting MCMC: %d burn-in + %d post-burn-in iterations\n', ...
 %  ========================================================================
 
 tic;
-n_accept = 0;
+n_accept     = 0;
+n_ffail      = 0;   % forward-model failures (caught and rejected)
+accept_window = 0;  % accepts within the current tuning window
 
 for i = 2:total_iter
     % Progress report
@@ -283,6 +296,21 @@ for i = 2:total_iter
         remaining = (total_iter - i) / rate;
         fprintf('  Iter %d/%d (%.0f/s, ~%.0f s remaining, accept=%.1f%%)\n', ...
             i, total_iter, rate, remaining, 100*n_accept/(i-1));
+    end
+
+    % --- Adaptive step-size tuning during burn-in (Gallen-style) ---
+    % Runs at the top of the iteration so it always fires on schedule,
+    % regardless of prior-rejection "continue" statements below.
+    if adapt_steps && i <= n_burnin && i > 2 && mod(i-1, tune_interval) == 0
+        win_acc = accept_window / tune_interval;
+        scale   = exp(win_acc - target_accept);   % >1 too high, <1 too low
+        scale   = min(max(scale, 0.5), 2.0);      % clamp per-update change
+        p_steps = p_steps .* scale;
+        accept_window = 0;
+        if mod(i-1, tune_interval*5) == 0
+            fprintf('    [tune] iter %d: window accept=%.1f%%, step scale=%.3f\n', ...
+                i-1, 100*win_acc, scale);
+        end
     end
 
     % Current parameters
@@ -326,6 +354,7 @@ for i = 2:total_iter
         params(i,:) = current;
         logL_chain(i) = logL_chain(i-1);
         accepted(i) = 0;
+        n_ffail = n_ffail + 1;
         continue;
     end
 
@@ -344,6 +373,7 @@ for i = 2:total_iter
         logL_chain(i) = logL_cand;
         accepted(i) = 1;
         n_accept = n_accept + 1;
+        accept_window = accept_window + 1;
 
         % Update MAP
         logP_cand = lp_cand + logL_cand;
@@ -365,6 +395,23 @@ elapsed_total = toc;
 fprintf('\nMCMC complete: %.0f seconds (%.1f iter/s)\n', elapsed_total, ...
     total_iter / elapsed_total);
 fprintf('Overall acceptance rate: %.1f%%\n', 100 * n_accept / total_iter);
+
+% Acceptance split (burn-in is inflated/tuned; post-burn-in is the chain
+% that actually matters for the posterior).
+acc_post = mean(accepted(n_burnin+1:end));
+fprintf('Post-burn-in acceptance rate: %.1f%%  (target ~%.0f%%)\n', ...
+    100 * acc_post, 100 * target_accept);
+
+if adapt_steps
+    fprintf('Tuned step sizes (frozen after burn-in): %s\n', ...
+        mat2str(p_steps, 3));
+end
+
+if n_ffail > 0
+    fprintf('WARNING: forward model failed on %d/%d iterations (%.2f%%).\n', ...
+        n_ffail, total_iter, 100 * n_ffail / total_iter);
+    fprintf('         If this fraction is large, check parameter bounds / dt.\n');
+end
 
 %% ========================================================================
 %  SECTION 6: EXTRACT POST-BURN-IN RESULTS

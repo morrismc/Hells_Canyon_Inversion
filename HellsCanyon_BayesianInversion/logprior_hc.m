@@ -32,6 +32,14 @@ end
 % Step 2: Start with uniform prior within bounds
 lp = 0;
 
+% Step 2b: Structural physical constraint, ALWAYS enforced (independent of
+% whether informative cave priors are used): drainage capture increases
+% incision, so the post-capture rate must exceed the pre-capture rate.
+if candidate(2) <= candidate(1)
+    lp = -Inf;
+    return;
+end
+
 % Step 3: Add informative Gaussian priors if requested
 if nargin >= 3 && ~isempty(cave_prior) && cave_prior.use_informative
 
@@ -62,12 +70,6 @@ if nargin >= 3 && ~isempty(cave_prior) && cave_prior.use_informative
             && cave_prior.n_std > 0
         lp = lp - 0.5 * ((candidate(4) - cave_prior.n_mean) / ...
              cave_prior.n_std)^2;
-    end
-
-    % Physical constraint: U_post > U_pre (capture increases incision)
-    if candidate(2) <= candidate(1)
-        lp = -Inf;
-        return;
     end
 end
 
