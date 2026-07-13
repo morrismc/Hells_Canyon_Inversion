@@ -72,7 +72,10 @@ cave_data = [
 
 cave_ages       = cave_data(:,1);
 cave_heights    = cave_data(:,2);
-cave_age_err    = cave_data(:,3);
+cave_age_err    = cave_data(:,3);  % NOT used in the likelihood: ages are
+                                   % treated as exact (as Gallen treats
+                                   % terrace ages); age uncertainty enters
+                                   % via the informative t_capture prior.
 cave_height_err = cave_data(:,4);
 
 % --- Whether to use cave data as PRIORS (informative) ---
@@ -428,9 +431,10 @@ end
 params_post = params(n_burnin+1:end, :);
 logL_post   = logL_chain(n_burnin+1:end);
 
-% Compute statistics
-param_names = {'U_{pre} (m/yr)', 'U_{post} (m/yr)', 'log_{10}(K)', ...
-               'n', 'm/n', 't_{capture} (yr)'};
+% Compute statistics.  Units in param_names must match param_scale:
+% rates are displayed in mm/yr (scale 1e3) and t_capture in Ma (1e-6).
+param_names = {'U_{pre} (mm/yr)', 'U_{post} (mm/yr)', 'log_{10}(K)', ...
+               'n', 'm/n', 't_{capture} (Ma)'};
 param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];
 
 fprintf('\n========== POSTERIOR SUMMARY ==========\n');

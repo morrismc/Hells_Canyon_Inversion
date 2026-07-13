@@ -204,9 +204,12 @@ grid on
 % Trunk-stream profile in along-river distance
 subplot(1,3,2)
 if ~isempty(trunk_node_idx)
+    % S.distance is already distance from the outlet (TopoToolbox
+    % convention), so sort ascending and use it directly.  Subtracting
+    % from max() would mirror the profile (distance from channel head).
     x_trunk = S.distance(trunk_node_idx);
-    [~, idx_sort] = sort(x_trunk, 'descend');
-    x_plot = (max(x_trunk) - x_trunk(idx_sort)) / 1e3;  % km from outlet
+    [x_sorted, idx_sort] = sort(x_trunk, 'ascend');
+    x_plot = x_sorted / 1e3;  % km from outlet
 
     plot(x_plot, Sz_obs(trunk_node_idx(idx_sort)), '-', ...
         'Color', [0.3 0.5 0.8], 'LineWidth', 1.5); hold on
@@ -257,9 +260,10 @@ saveas(fig3, fullfile(output_dir, ['model_fit_' fileTag '.png']));
 fig4 = figure('Position', [200, 200, 1200, 700]);
 
 if ~isempty(trunk_node_idx)
+    % Same convention as Fig 3: S.distance IS distance from the outlet.
     x_trunk = S.distance(trunk_node_idx);
-    [~, idx_sort] = sort(x_trunk, 'descend');
-    x_plot = (max(x_trunk) - x_trunk(idx_sort)) / 1e3;
+    [x_sorted, idx_sort] = sort(x_trunk, 'ascend');
+    x_plot = x_sorted / 1e3;
 
     obs_trunk = Sz_obs(trunk_node_idx(idx_sort));
     mod_trunk = Z_mod_map(trunk_node_idx(idx_sort));
@@ -273,8 +277,6 @@ if ~isempty(trunk_node_idx)
     % Shade positive residuals (observed above model) in blue,
     % negative (model above observed) in red.
     pos_mask = resid >= 0;
-    neg_mask = resid < 0;
-    yl = ylim;
     for k = 1:length(x_plot)-1
         if pos_mask(k)
             fill([x_plot(k) x_plot(k+1) x_plot(k+1) x_plot(k)], ...

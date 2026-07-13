@@ -109,7 +109,10 @@ function z = calculate_z(S, S_DA, U, K, mn, n)
 % All arrays in node space (same length as S.distance).
 
 z  = zeros(size(S.distance));
-Sa = (U / K)^(1/n) * (1 ./ S_DA).^mn;
+% Elementwise ops (as in Gallen's calculate_z) so K may be a vector;
+% with the previous matrix operators (/ and ^) a vector K would trigger
+% matrix right-division and an mpower error.
+Sa = (U ./ K).^(1/n) .* (1 ./ S_DA).^mn;
 
 Six  = S.ix;
 Sixc = S.ixc;
