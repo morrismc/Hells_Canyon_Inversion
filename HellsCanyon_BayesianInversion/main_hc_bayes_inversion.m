@@ -83,13 +83,15 @@ n_burnin   = 1e4;    % Burn-in iterations (increase for production)
 n_postburn = 1e5;    % Post-burn-in iterations (increase for production)
 dt_forward = 25000;  % Forward model time step (years)
 
-% --- Adaptive proposal tuning (Gallen-style, burn-in ONLY) ---
-% Gallen & Fernandez-Blanco (2021) scale the random-walk step sizes during
-% burn-in to drive the acceptance rate into the efficient Metropolis range.
-% Steps are FROZEN once burn-in ends so the post-burn-in chain is a proper
+% --- Adaptive proposal tuning (burn-in ONLY) ---
+% NOTE: Gallen & Fernandez-Blanco (2021) hand-tune FIXED step sizes by
+% trial and error ("a tedious process") until the acceptance rate falls in
+% the ~20-60% range.  Here that manual tuning is automated: step sizes are
+% rescaled during burn-in to drive acceptance toward the target, then
+% FROZEN once burn-in ends so the post-burn-in chain is a proper
 % stationary Markov chain (adapting during sampling would break detailed
-% balance).  This directly addresses chains that get stuck at low
-% acceptance with fixed step sizes.
+% balance).  The post-burn-in sampler is therefore identical in form to
+% Gallen's fixed-step Metropolis-Hastings.
 adapt_steps   = true;   % enable burn-in step-size tuning
 tune_interval = 200;    % iterations between step-size updates
 target_accept = 0.30;   % target acceptance rate (optimal ~0.23-0.44)
@@ -220,6 +222,11 @@ fprintf('Data loaded: %d stream nodes, %d cave observations\n', n_stream, n_cave
 
 total_iter = n_burnin + n_postburn;
 
+% Make sure new MATLAB sessions use different random numbers (as in
+% Gallen's master script: "rng shuffle").  Without this, every fresh
+% MATLAB session would reproduce the identical chain.
+rng('shuffle');
+
 % Storage arrays
 params      = zeros(total_iter, n_params);
 logL_chain  = zeros(total_iter, 1);
@@ -298,7 +305,8 @@ for i = 2:total_iter
             i, total_iter, rate, remaining, 100*n_accept/(i-1));
     end
 
-    % --- Adaptive step-size tuning during burn-in (Gallen-style) ---
+    % --- Adaptive step-size tuning during burn-in ---
+    % Automates the manual step tuning Gallen does by trial and error.
     % Runs at the top of the iteration so it always fires on schedule,
     % regardless of prior-rejection "continue" statements below.
     if adapt_steps && i <= n_burnin && i > 2 && mod(i-1, tune_interval) == 0

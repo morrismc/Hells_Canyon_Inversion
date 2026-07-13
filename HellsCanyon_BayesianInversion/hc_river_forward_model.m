@@ -90,11 +90,12 @@ for phase = 2:length(U_rates)
     for step = 1:n_steps
         Z = fastscape_eroder_outlets(Z, n, dt_phase, Af, d, r, dx, ...
             U_rates(phase), outlet_nodes);
+        % Enforce a downstream-monotonic profile after every erosion
+        % step, exactly as in Gallen's river_incision_forward_model.m
+        % (check_z is called inside the time loop there).
+        Z = check_z(S, Z);
     end
 end
-
-% Final safety check (no-op if the implicit solver behaved correctly)
-Z = check_z(S, Z);
 
 %% Return node-ordered elevations
 Z_mod = Z(:);
