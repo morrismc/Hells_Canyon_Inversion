@@ -47,6 +47,12 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_rates, ...
 %   Braun & Willett (2013), Geomorphology
 %   Gallen & Fernandez-Blanco (2021), JGR-Earth Surface
 
+% Declared at the top of the function, as MATLAB expects for persistent
+% variables (used further down to print diagnostics on the first call
+% only).  NOTE: a bare "clear" does not reset persistents, so the
+% diagnostic block prints once per MATLAB session, not once per run.
+persistent diag_printed;
+
 S_DA = S_DA(:);
 U_rates = U_rates(:)';
 t_transitions = t_transitions(:)';
@@ -60,7 +66,6 @@ Z = check_z(S, Z);
 [d, r, Af, dx, outlet_nodes] = fastscape_eroder_data_prep(S, S_DA, K, m);
 
 %% Diagnostic output (first call only)
-persistent diag_printed;
 if isempty(diag_printed)
     diag_printed = true;
     fprintf('\n--- Forward Model Diagnostics ---\n');
@@ -132,6 +137,24 @@ function z = check_z(S, z)
 Six  = S.ix;
 Sixc = S.ixc;
 
+% Vectorized pre-check.  The corrective loop below is a scalar interpreted
+% loop over every node and (following Gallen) runs at EVERY time step, so
+% it costs about as much as the erosion solver itself.  In practice it is
+% almost always a no-op: for n = 1 the implicit update is a weighted mean
+% of a node and its receiver, so it cannot invert their order, and the
+% n ~= 1 branch is clamped to stay above the receiver.  This test skips
+% the loop whenever the profile is already monotonic, which is the normal
+% case, and is exactly equivalent -- if nothing violates the condition the
+% loop would make no change anyway.
+%
+% NaN-safe: a NaN comparison is false, so a profile containing NaN fails
+% the test and falls through to the loop, where NaN also fails the
+% elementwise test and is passed through untouched -- identical to the
+% original behaviour.
+if all(z(Six) > z(Sixc))
+    return;
+end
+
 for lp = numel(Six):-1:1
     if z(Six(lp)) <= z(Sixc(lp))
         z(Six(lp)) = z(Sixc(lp)) + 0.1;
@@ -154,12 +177,13 @@ else
     A = K(:) .* S_DA.^m;
 end
 
-% Find outlet nodes and convert to node-list indices.
-outlet_grid = streampoi(S, 'outlets', 'ix');
-outlet_nodes = zeros(size(outlet_grid));
-for i = 1:length(outlet_grid)
-    outlet_nodes(i) = find(S.IXgrid == outlet_grid(i));
-end
+% Find outlet nodes and convert to node-list indices.  Vectorized with
+% ismember: the previous loop ran a full O(N) find() per outlet on every
+% forward-model call, and would also error out (empty assignment) if an
+% outlet were ever missing from S.IXgrid.
+outlet_grid  = streampoi(S, 'outlets', 'ix');
+[found, outlet_nodes] = ismember(outlet_grid, S.IXgrid);
+outlet_nodes = outlet_nodes(found);
 
 % Distance between donor-receiver pairs.  Guard against the rare case
 % where two consecutive stream nodes end up at identical distance

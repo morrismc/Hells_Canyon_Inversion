@@ -209,6 +209,32 @@ else
     return;
 end
 
+% --- Validate and condition the input data -----------------------------
+% TopoToolbox GRIDobj data is normally SINGLE precision.  Left as single,
+% every downstream product (residuals, log-likelihood) is computed in
+% single precision, and a summed chi-square over thousands of nodes loses
+% meaningful accuracy.  Cast to double once, here.
+Sz   = double(Sz(:));
+S_DA = double(S_DA(:));
+
+% A NaN or Inf anywhere in the input silently propagates into the modeled
+% profile and then into the likelihood.  Catch it now rather than after
+% hours of sampling.
+if any(~isfinite(Sz))
+    error(['Sz contains %d non-finite value(s). Fix the DEM / stream ' ...
+           'extraction before running the MCMC.'], sum(~isfinite(Sz)));
+end
+if any(~isfinite(S_DA))
+    error(['S_DA contains %d non-finite value(s). Fix the drainage-area ' ...
+           'grid before running the MCMC.'], sum(~isfinite(S_DA)));
+end
+% Drainage area enters as (1./S_DA).^(m/n); a zero or negative area gives
+% Inf/complex values in the steady-state profile.
+if any(S_DA <= 0)
+    error(['S_DA contains %d non-positive value(s). Drainage area must ' ...
+           'be > 0 at every stream node.'], sum(S_DA <= 0));
+end
+
 % Normalize elevations relative to outlet
 Sz_norm = Sz - min(Sz);
 
@@ -216,6 +242,10 @@ Sz_norm = Sz - min(Sz);
 stream_err = 200;  % reflects model inadequacy
 n_stream = length(Sz_norm);
 n_cave   = length(cave_ages);
+
+% Hoisted out of the MCMC loop: this vector is constant, so rebuilding it
+% on every iteration is pure overhead.
+stream_sigma = stream_err * ones(n_stream, 1);
 
 fprintf('Data loaded: %d stream nodes, %d cave observations\n', n_stream, n_cave);
 
@@ -255,7 +285,16 @@ cave_pred = cave_forward_model(cave_ages, U_rates_init, t_trans_init);
 
 % Initial likelihood
 [logL_init, ~, ~] = hc_loglikelihood(Sz_norm, Z_mod, ...
-    stream_err * ones(n_stream, 1), cave_heights, cave_pred, cave_height_err);
+    stream_sigma, cave_heights, cave_pred, cave_height_err);
+
+% If the starting model is already non-finite the whole chain is
+% meaningless, so stop now instead of after hours of sampling.
+if ~isfinite(logL_init)
+    error(['Initial log-likelihood is %s. The forward model returned a ' ...
+           'non-finite profile at the starting parameters -- check ' ...
+           'params_init, prior_bounds and the stream data.'], ...
+           num2str(logL_init));
+end
 
 logL_chain(1) = logL_init;
 accepted(1)   = 1;
@@ -296,7 +335,9 @@ fprintf('\nStarting MCMC: %d burn-in + %d post-burn-in iterations\n', ...
 tic;
 n_accept     = 0;
 n_ffail      = 0;   % forward-model failures (caught and rejected)
+n_nonfinite  = 0;   % candidates with non-finite likelihood (rejected)
 accept_window = 0;  % accepts within the current tuning window
+first_err_shown = false;  % print the first forward-model error only
 
 for i = 2:total_iter
     % Progress report
@@ -359,13 +400,34 @@ for i = 2:total_iter
 
         % Likelihood
         [logL_cand, ~, ~] = hc_loglikelihood(Sz_norm, Z_cand, ...
-            stream_err * ones(n_stream, 1), cave_heights, cave_cand, cave_height_err);
-    catch
-        % Forward model failed - reject
+            stream_sigma, cave_heights, cave_cand, cave_height_err);
+    catch ME
+        % Forward model failed - reject.  Surface the FIRST error so a
+        % systematic fault (e.g. a typo or a bad data field) cannot
+        % silently reject every candidate for days on end.
+        if ~first_err_shown
+            first_err_shown = true;
+            fprintf(['\n  NOTE: first forward-model failure at iter %d:\n' ...
+                     '        %s\n        (further failures counted silently)\n\n'], ...
+                     i, ME.message);
+        end
         params(i,:) = current;
         logL_chain(i) = logL_chain(i-1);
         accepted(i) = 0;
         n_ffail = n_ffail + 1;
+        continue;
+    end
+
+    % Guard against a non-finite likelihood BEFORE it reaches the
+    % acceptance test.  MATLAB's min() omits NaN, so min(NaN, 0) returns
+    % 0 and "log(rand) < 0" would accept unconditionally; the NaN would
+    % then enter logL_chain and every later ratio would also be NaN,
+    % turning the remainder of the run into an unconstrained random walk.
+    if ~isfinite(logL_cand)
+        params(i,:) = current;
+        logL_chain(i) = logL_chain(i-1);
+        accepted(i) = 0;
+        n_nonfinite = n_nonfinite + 1;
         continue;
     end
 
@@ -376,6 +438,12 @@ for i = 2:total_iter
     % Log acceptance ratio
     log_alpha = (lp_cand + logL_cand + lq_rev) - ...
                 (lp_current + logL_chain(i-1) + lq_fwd);
+
+    % Belt-and-braces: an undefined ratio must never be treated as a
+    % favourable one (see the min()/NaN note above).
+    if isnan(log_alpha)
+        log_alpha = -Inf;
+    end
 
     % Metropolis-Hastings accept/reject
     if log(rand) < min(log_alpha, 0)
@@ -422,6 +490,13 @@ if n_ffail > 0
     fprintf('WARNING: forward model failed on %d/%d iterations (%.2f%%).\n', ...
         n_ffail, total_iter, 100 * n_ffail / total_iter);
     fprintf('         If this fraction is large, check parameter bounds / dt.\n');
+end
+
+if n_nonfinite > 0
+    fprintf('WARNING: %d/%d candidates (%.2f%%) had a non-finite likelihood\n', ...
+        n_nonfinite, total_iter, 100 * n_nonfinite / total_iter);
+    fprintf('         and were rejected. A large fraction means the forward\n');
+    fprintf('         model is overflowing somewhere in the sampled range.\n');
 end
 
 %% ========================================================================
