@@ -2,32 +2,14 @@ function plot_hc_results(params, logL_chain, n_burnin, params_map, ...
     Z_mod_map, Sz_obs, S, cave_ages, cave_heights, cave_height_err, ...
     cave_pred_map, prior_bounds, cave_prior, param_names, param_scale, ...
     output_dir, fileTag, S_DA)
-% PLOT_HC_RESULTS  Diagnostic and summary plots for Hells Canyon MCMC inversion.
+% PLOT_HC_RESULTS  Diagnostic and summary plots for Hells Canyon MCMC
+% inversion (2-phase model, 6 parameters).
 %
-% Creates three figures:
+% Creates four figures:
 %   Fig 1: MCMC diagnostics (chains, acceptance, likelihood)
 %   Fig 2: Parameter posteriors with priors
-%   Fig 3: Model fit (river profile + cave data)
-%
-% Inputs:
-%   params       - [total_iter x n_params] full MCMC chain
-%   logL_chain   - [total_iter x 1] log-likelihood chain
-%   n_burnin     - Number of burn-in iterations
-%   params_map   - [1 x n_params] MAP parameter vector
-%   Z_mod_map    - Modeled stream elevations at MAP
-%   Sz_obs       - Observed stream elevations (normalized)
-%   S            - TopoToolbox STREAMobj
-%   cave_ages    - Cave burial ages (years)
-%   cave_heights - Cave heights above river (m)
-%   cave_height_err - Cave height uncertainties (m)
-%   cave_pred_map - MAP cave height predictions (m)
-%   prior_bounds - [n_params x 2] prior bounds
-%   cave_prior   - struct with informative prior settings
-%   param_names  - cell array of parameter names
-%   param_scale  - [1 x n_params] display scaling factors
-%   output_dir   - Directory for saving figures
-%   fileTag      - Tag for output filenames
-%   S_DA         - (optional) Drainage area at stream nodes (m^2) for chi/tau
+%   Fig 3: Model fit (chi profile, trunk profile, cave data)
+%   Fig 4: Trunk residual analysis (highlights unexplained knickpoints)
 
 n_params = size(params, 2);
 total_iter = size(params, 1);
@@ -69,28 +51,31 @@ for j = 1:n_params
     xline(prior_bounds(j,1) * param_scale(j), 'k--');
     xline(prior_bounds(j,2) * param_scale(j), 'k--');
 
-    % Informative prior (if applicable)
+    % Overlay informative priors (green)
     if cave_prior.use_informative
         x_range = linspace(prior_bounds(j,1), prior_bounds(j,2), 200);
+        prior_pdf = [];
         switch j
             case 1  % U_pre
-                if cave_prior.U_pre_std > 0
+                if isfield(cave_prior,'U_pre_mean') && cave_prior.U_pre_std > 0
                     prior_pdf = normpdf(x_range, cave_prior.U_pre_mean, cave_prior.U_pre_std);
-                    prior_pdf = prior_pdf / max(prior_pdf) * max(ylim) * 0.5;
-                    plot(x_range * param_scale(j), prior_pdf, 'g-', 'LineWidth', 1.5);
                 end
             case 2  % U_post
-                if cave_prior.U_post_std > 0
+                if isfield(cave_prior,'U_post_mean') && cave_prior.U_post_std > 0
                     prior_pdf = normpdf(x_range, cave_prior.U_post_mean, cave_prior.U_post_std);
-                    prior_pdf = prior_pdf / max(prior_pdf) * max(ylim) * 0.5;
-                    plot(x_range * param_scale(j), prior_pdf, 'g-', 'LineWidth', 1.5);
+                end
+            case 4  % n
+                if isfield(cave_prior,'n_mean') && isfield(cave_prior,'n_std') && cave_prior.n_std > 0
+                    prior_pdf = normpdf(x_range, cave_prior.n_mean, cave_prior.n_std);
                 end
             case 6  % t_capture
-                if cave_prior.t_capture_std > 0
+                if isfield(cave_prior,'t_capture_mean') && cave_prior.t_capture_std > 0
                     prior_pdf = normpdf(x_range, cave_prior.t_capture_mean, cave_prior.t_capture_std);
-                    prior_pdf = prior_pdf / max(prior_pdf) * max(ylim) * 0.5;
-                    plot(x_range * param_scale(j), prior_pdf, 'g-', 'LineWidth', 1.5);
                 end
+        end
+        if ~isempty(prior_pdf) && max(prior_pdf) > 0
+            prior_pdf = prior_pdf / max(prior_pdf) * max(ylim) * 0.5;
+            plot(x_range * param_scale(j), prior_pdf, 'g-', 'LineWidth', 1.5);
         end
     end
 
@@ -98,7 +83,7 @@ for j = 1:n_params
     if j == 1; title('Posterior Distributions'); end
 end
 
-% Acceptance rate over time (detect changes in any parameter as proxy)
+% Acceptance rate
 subplot(n_params + 1, 2, 2*(n_params+1))
 win = 1000;
 any_changed = any(diff(params, 1, 1) ~= 0, 2);
@@ -114,7 +99,7 @@ saveas(fig1, fullfile(output_dir, ['diagnostics_' fileTag '.png']));
 %% Figure 2: Key posterior pairs and correlations
 fig2 = figure('Position', [100, 100, 1200, 800]);
 
-% K vs n (the key trade-off)
+% K vs n
 subplot(2,3,1)
 scatter(params_post(:,3), params_post(:,4), 2, logL_chain(n_burnin+1:end), ...
     'filled', 'MarkerFaceAlpha', 0.1);
@@ -138,7 +123,7 @@ title('Capture Time vs Post-Capture Rate');
 subplot(2,3,3)
 histogram(params_post(:,6) * 1e-6, 50, 'Normalization', 'pdf', ...
     'FaceColor', [0.8 0.4 0.4], 'EdgeColor', 'none'); hold on
-if cave_prior.use_informative
+if cave_prior.use_informative && isfield(cave_prior,'t_capture_mean')
     x = linspace(0.5, 5, 200);
     y = normpdf(x, cave_prior.t_capture_mean*1e-6, cave_prior.t_capture_std*1e-6);
     y = y / max(y) * max(ylim) * 0.7;
@@ -148,12 +133,18 @@ end
 xlabel('t_{capture} (Ma)'); ylabel('PDF');
 title('Capture Timing Posterior');
 
-% n histogram
+% n histogram with prior
 subplot(2,3,4)
 histogram(params_post(:,4), 50, 'Normalization', 'pdf', ...
     'FaceColor', [0.4 0.7 0.4], 'EdgeColor', 'none'); hold on
 xline(1, 'k--', 'n=1', 'LineWidth', 2, 'FontSize', 12);
 xline(median(params_post(:,4)), 'r-', 'LineWidth', 2);
+if isfield(cave_prior, 'n_mean') && isfield(cave_prior, 'n_std') && cave_prior.n_std > 0
+    x = linspace(prior_bounds(4,1), prior_bounds(4,2), 200);
+    y = normpdf(x, cave_prior.n_mean, cave_prior.n_std);
+    y = y / max(y) * max(ylim) * 0.7;
+    plot(x, y, 'g-', 'LineWidth', 1.5);
+end
 xlabel('n (slope exponent)'); ylabel('PDF');
 title('Slope Exponent Posterior');
 
@@ -181,8 +172,7 @@ saveas(fig2, fullfile(output_dir, ['posteriors_' fileTag '.png']));
 %% Figure 3: Model Fit
 fig3 = figure('Position', [150, 150, 1600, 700]);
 
-% Identify trunk stream nodes so we can visualize the knickpoint along
-% the main stem separately from the noisy cloud of tributary nodes.
+% Identify trunk stream nodes
 try
     S_trunk_obj = trunk(klargestconncomps(S, 1));
     [~, trunk_node_idx] = ismember(S_trunk_obj.IXgrid, S.IXgrid);
@@ -191,43 +181,35 @@ catch
     trunk_node_idx = [];
 end
 
-% River profile fit in tau space (all nodes)
+% River profile fit in chi space (K-independent, avoids tau blow-up)
 subplot(1,3,1)
+Schi = [];
 if nargin >= 18 && ~isempty(S_DA)
-    Stau_map = compute_tau_from_chi(S, S_DA, params_map);
-else
-    Stau_map = [];
+    Schi = compute_chi(S, S_DA, params_map(5));  % m/n = param 5
 end
-if ~isempty(Stau_map)
-    plot(Stau_map / 1e6, Sz_obs, '.', 'Color', [0.75 0.75 0.75], ...
-        'MarkerSize', 3); hold on
-    plot(Stau_map / 1e6, Z_mod_map, '.', 'Color', [0.2 0.2 0.2], ...
-        'MarkerSize', 3);
-    xlabel('\tau (Ma)'); ylabel('Elevation (m)');
+if ~isempty(Schi)
+    plot(Schi, Sz_obs, '.', 'Color', [0.75 0.75 0.75], 'MarkerSize', 3); hold on
+    plot(Schi, Z_mod_map, '.', 'Color', [0.2 0.2 0.2], 'MarkerSize', 3);
+    xlabel('\chi (m)'); ylabel('Elevation (m)');
 else
     plot(Sz_obs, '.', 'Color', [0.75 0.75 0.75], 'MarkerSize', 3); hold on
     plot(Z_mod_map, '.', 'Color', [0.2 0.2 0.2], 'MarkerSize', 3);
     xlabel('Node index'); ylabel('Elevation (m)');
 end
-% Mark t_capture as a vertical line in tau space.  In a uniform-K
-% transient model the knickpoint is at tau = t_capture.
-try
-    xline(params_map(6) / 1e6, 'b--', sprintf('\\tau = t_{cap}'), ...
-        'LineWidth', 1.5, 'FontSize', 9);
-catch
-end
 legend('Observed (all nodes)', 'MAP model (all nodes)', ...
     'Location', 'northwest');
-title('River Profile Fit (\tau space, all nodes)');
+title('River Profile Fit (\chi space)');
 grid on
 
-% Trunk-stream profile in along-river distance (shows the knickpoint
-% clearly, without the tributary scatter).
+% Trunk-stream profile in along-river distance
 subplot(1,3,2)
 if ~isempty(trunk_node_idx)
+    % S.distance is already distance from the outlet (TopoToolbox
+    % convention), so sort ascending and use it directly.  Subtracting
+    % from max() would mirror the profile (distance from channel head).
     x_trunk = S.distance(trunk_node_idx);
-    [~, idx_sort] = sort(x_trunk, 'descend');  % outlet-to-headwater
-    x_plot = (max(x_trunk) - x_trunk(idx_sort)) / 1e3;  % km from outlet
+    [x_sorted, idx_sort] = sort(x_trunk, 'ascend');
+    x_plot = x_sorted / 1e3;  % km from outlet
 
     plot(x_plot, Sz_obs(trunk_node_idx(idx_sort)), '-', ...
         'Color', [0.3 0.5 0.8], 'LineWidth', 1.5); hold on
@@ -253,7 +235,9 @@ plot(cave_ages / 1e6, cave_pred_map, 'rs', 'MarkerSize', 10, ...
 
 % Plot model incision history
 t_plot = linspace(0, max(cave_ages)*1.1, 200);
-h_plot = cave_forward_model(t_plot, params_map(6), params_map(1), params_map(2));
+U_rates_map = [params_map(1), params_map(2)];
+t_trans_map = params_map(6);
+h_plot = cave_forward_model(t_plot, U_rates_map, t_trans_map);
 plot(t_plot / 1e6, h_plot, 'r-', 'LineWidth', 2);
 
 % Mark capture time
@@ -268,33 +252,113 @@ set(gca, 'XDir', 'reverse');
 sgtitle(sprintf('Model Fit: %s', fileTag), 'FontSize', 14);
 saveas(fig3, fullfile(output_dir, ['model_fit_' fileTag '.png']));
 
+%% Figure 4: Trunk Residual Analysis
+% Highlights where the 2-phase model fails to match the trunk profile.
+% Systematic residuals (especially high in the upper catchment) likely
+% reflect pre-capture changes in uplift/incision that the simple
+% two-phase model does not capture.
+fig4 = figure('Position', [200, 200, 1200, 700]);
+
+if ~isempty(trunk_node_idx)
+    % Same convention as Fig 3: S.distance IS distance from the outlet.
+    x_trunk = S.distance(trunk_node_idx);
+    [x_sorted, idx_sort] = sort(x_trunk, 'ascend');
+    x_plot = x_sorted / 1e3;
+
+    obs_trunk = Sz_obs(trunk_node_idx(idx_sort));
+    mod_trunk = Z_mod_map(trunk_node_idx(idx_sort));
+    resid     = obs_trunk - mod_trunk;
+
+    % Panel 1: Trunk overlay with residual shading
+    subplot(2,1,1)
+    plot(x_plot, obs_trunk, '-', 'Color', [0.3 0.5 0.8], 'LineWidth', 1.5); hold on
+    plot(x_plot, mod_trunk, '-', 'Color', [0.85 0.2 0.2], 'LineWidth', 1.5);
+
+    % Shade positive residuals (observed above model) in blue,
+    % negative (model above observed) in red.
+    pos_mask = resid >= 0;
+    for k = 1:length(x_plot)-1
+        if pos_mask(k)
+            fill([x_plot(k) x_plot(k+1) x_plot(k+1) x_plot(k)], ...
+                [mod_trunk(k) mod_trunk(k+1) obs_trunk(k+1) obs_trunk(k)], ...
+                [0.3 0.5 0.8], 'FaceAlpha', 0.15, 'EdgeColor', 'none');
+        else
+            fill([x_plot(k) x_plot(k+1) x_plot(k+1) x_plot(k)], ...
+                [obs_trunk(k) obs_trunk(k+1) mod_trunk(k+1) mod_trunk(k)], ...
+                [0.85 0.2 0.2], 'FaceAlpha', 0.15, 'EdgeColor', 'none');
+        end
+    end
+
+    xlabel('Distance from outlet (km)'); ylabel('Elevation (m)');
+    legend('Observed trunk', 'MAP model (2-phase)', 'Location', 'northwest');
+    title('Trunk Profile with Residual Shading');
+    grid on
+
+    % Panel 2: Residual along the trunk
+    subplot(2,1,2)
+    area(x_plot, resid, 'FaceColor', [0.6 0.6 0.9], 'EdgeColor', [0.3 0.3 0.6], ...
+        'FaceAlpha', 0.5, 'LineWidth', 1);
+    hold on
+    yline(0, 'k-', 'LineWidth', 1);
+
+    % Smooth residual to highlight systematic trends (potential knickpoints)
+    if length(resid) > 20
+        resid_smooth = movmean(resid, max(10, round(length(resid)/20)));
+        plot(x_plot, resid_smooth, 'r-', 'LineWidth', 2);
+    end
+
+    % Mark locations where smoothed residual changes sign (potential
+    % additional knickpoint locations not captured by the 2-phase model)
+    if exist('resid_smooth', 'var')
+        sign_changes = find(diff(sign(resid_smooth)) ~= 0);
+        for sc = 1:length(sign_changes)
+            xline(x_plot(sign_changes(sc)), 'r--', 'LineWidth', 1);
+        end
+        if ~isempty(sign_changes)
+            legend('Residual', 'Zero line', 'Smoothed residual', ...
+                'Potential knickpoint', 'Location', 'best');
+        else
+            legend('Residual', 'Zero line', 'Smoothed residual', ...
+                'Location', 'best');
+        end
+    else
+        legend('Residual', 'Zero line', 'Location', 'best');
+    end
+
+    xlabel('Distance from outlet (km)');
+    ylabel('Residual: Observed - Model (m)');
+    title({'Trunk Profile Residual', ...
+        'Systematic trends suggest pre-capture incision rate changes not captured by 2-phase model'});
+    grid on
+else
+    text(0.5, 0.5, 'Trunk extraction unavailable', ...
+        'HorizontalAlignment', 'center', 'Units', 'normalized', 'FontSize', 14);
+end
+
+sgtitle(sprintf('Trunk Residual Analysis: %s', fileTag), 'FontSize', 14);
+saveas(fig4, fullfile(output_dir, ['trunk_residual_' fileTag '.png']));
+
 fprintf('Figures saved to: %s\n', output_dir);
 
 end
 
 %% Helper function
-function Stau = compute_tau_from_chi(S, S_DA, params_map)
-% Compute tau = chi / K using MAP parameters for plotting.
-% chi = integral of (1/A)^(m/n) dx from outlet upstream.
+function Schi = compute_chi(S, S_DA, mn)
+% Compute chi coordinate for the stream network.
+% chi = integral from outlet to x of (1/A)^(m/n) dx
 try
-    K_map  = 10^params_map(3);
-    mn_map = params_map(5);  % m/n
-
-    % Compute chi via upstream integration
     Schi = zeros(size(S.distance));
     Six  = S.ix;
     Sixc = S.ixc;
     Sx   = S.distance;
-    Sa   = (1 ./ S_DA).^mn_map;
+    Sa   = (1 ./ S_DA).^mn;
 
     for lp = numel(Six):-1:1
         Schi(Six(lp)) = Schi(Sixc(lp)) + ...
             (Sa(Sixc(lp)) + (Sa(Six(lp)) - Sa(Sixc(lp))) / 2) * ...
             abs(Sx(Sixc(lp)) - Sx(Six(lp)));
     end
-
-    Stau = Schi / K_map;
 catch
-    Stau = [];
+    Schi = [];
 end
 end

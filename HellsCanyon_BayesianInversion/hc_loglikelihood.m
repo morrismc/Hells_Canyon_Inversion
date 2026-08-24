@@ -2,11 +2,18 @@ function [logL, logL_stream, logL_cave] = hc_loglikelihood(obs_stream, ...
     mod_stream, sigma_stream, obs_cave, mod_cave, sigma_cave)
 % HC_LOGLIKELIHOOD  Combined log-likelihood for river profiles + cave data.
 %
-% Uses a moderate balancing approach:  the Gallen & Fernandez-Blanco (2021)
-% sqrt-scaling is capped so that with very unbalanced datasets (e.g. 5000
-% stream nodes vs. 3 caves) the stream data retains enough weight to
-% constrain K, n, and m/n, while cave data still contributes meaningfully
-% through both the likelihood and informative priors.
+% Dataset weighting.  Gallen & Fernandez-Blanco (2021) balance their two
+% datasets by inflating the stream errors by sqrt(n_stream/n_terrace),
+% which is equivalent to down-weighting the stream log-likelihood so its
+% EFFECTIVE number of data points equals the terrace count (equal total
+% weight per dataset).  Applied literally here, that would give the
+% ~5000-node stream network an effective weight of only n_cave = 3 points,
+% leaving K, n, and m/n essentially unconstrained by the profile.  We
+% therefore use the same mechanism (a multiplicative weight Ws on the
+% stream log-likelihood, identical algebra to Gallen's error inflation)
+% but set the effective stream count to N_eff_stream instead of n_cave —
+% a deliberate, documented departure motivated by the extreme 5000:3
+% imbalance and by spatial autocorrelation of profile residuals.
 %
 % Inputs:
 %   obs_stream   - Observed stream elevations (m)
@@ -42,10 +49,10 @@ if ~isempty(obs_cave) && ~isempty(mod_cave)
     resid_cave = (obs_cave - mod_cave) ./ sigma_cave;
     logL_cave = -0.5 * sum(resid_cave.^2);
 
-    % Moderate balancing: scale stream logL so that the *effective* number
-    % of stream data points equals a user-tunable target.  This preserves
-    % enough stream weight to constrain K/n/m-n while letting cave data
-    % contribute.
+    % Scale stream logL so that the *effective* number of stream data
+    % points equals a tunable target (see header note on how this relates
+    % to Gallen's equal-weight error inflation; Ws here plays the same
+    % role as his 1/Ws^2 error scaling).
     %
     % For a river profile with strong spatial autocorrelation (node
     % spacing ~30 m, autocorrelation length of hundreds of meters), a

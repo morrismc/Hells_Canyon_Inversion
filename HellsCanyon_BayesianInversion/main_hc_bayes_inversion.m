@@ -10,6 +10,12 @@
 %   Phase 2: Post-capture rapid incision at rate U_post
 %   Transition at time t_capture (years before present)
 %
+% The two-phase model captures the primary capture-driven incision
+% signal.  Residual structure in the trunk profile (additional knickpoints
+% higher in the catchment) likely reflects pre-capture changes in uplift
+% or incision rate that are not the focus of this analysis but are
+% highlighted in the trunk residual plot.
+%
 % Data constraints:
 %   (1) River profile elevations from tributary DEMs
 %   (2) Cave burial ages and heights above modern river
@@ -47,68 +53,70 @@ clear; close all; clc;
 %  ========================================================================
 
 % --- File paths ---
-% Stream data: either pre-extracted .mat or DEM file
-% If using prepare_hc_stream_data.m, point to the output .mat file
-stream_data_file = 'C:\Users\mmorriss\Desktop\Side_projects\Hells_Canyon_Inversion\HellsCanyon_BayesianInversion\hc_stream_data.mat';  % <-- UPDATE: path to hc_stream_data.mat
+stream_data_file = 'C:\Users\mmorriss\Desktop\Side_projects\Hells_Canyon_Inversion\HellsCanyon_BayesianInversion\hc_stream_data.mat';
 
 % Output tag for saving results
 fileTag = 'HC_capture';
 
 % Output directory
-output_dir = pwd;  % <-- UPDATE if desired
+output_dir = pwd;
 
 % --- Cave Data ---
 % Cave burial ages (years before present) and heights above modern river (m)
 % From Morriss et al. (2025) PNAS
-% Format: [age_yr, height_m, age_uncertainty_yr, height_uncertainty_m]
-%
-% UPDATE THESE WITH YOUR ACTUAL CAVE DATA:
-% Example values based on published constraints:
 cave_data = [
     1.5e6,   242,  0.73e6,  20;   % Youngest cave (rapid incision phase)
     2.71e6,  343,  1.4e6,   20;   % Middle cave
     5.5e6,   375,  3.8e6,   20;   % Oldest cave (high, slow incision phase)
 ];
-% Column 1: burial age (years)
-% Column 2: height above modern river (m)
-% Column 3: 1-sigma age uncertainty (years)
-% Column 4: 1-sigma height uncertainty (m)
 
 cave_ages       = cave_data(:,1);
 cave_heights    = cave_data(:,2);
-cave_age_err    = cave_data(:,3);
+cave_age_err    = cave_data(:,3);  % NOT used in the likelihood: ages are
+                                   % treated as exact (as Gallen treats
+                                   % terrace ages); age uncertainty enters
+                                   % via the informative t_capture prior.
 cave_height_err = cave_data(:,4);
 
-% --- Whether to use cave data as PRIORS (informative) or just LIKELIHOOD ---
-use_informative_priors = true;  % true = Gaussian priors from caves on timing/rates
+% --- Whether to use cave data as PRIORS (informative) ---
+use_informative_priors = true;
 
 % --- MCMC Settings ---
-n_burnin   = 1e4;    % Burn-in iterations (increase for production: 3e5)
-n_postburn = 1e5;    % Post-burn-in iterations (increase for production: 3e6)
+n_burnin   = 1e4;    % Burn-in iterations (increase for production)
+n_postburn = 1e5;    % Post-burn-in iterations (increase for production)
 dt_forward = 25000;  % Forward model time step (years)
 
-% --- Run time for forward model ---
-% Should be long enough to capture the full pre-capture steady state
-run_time = 10e6;  % 10 Ma (generous to allow pre-capture equilibrium)
+% --- Adaptive proposal tuning (burn-in ONLY) ---
+% NOTE: Gallen & Fernandez-Blanco (2021) hand-tune FIXED step sizes by
+% trial and error ("a tedious process") until the acceptance rate falls in
+% the ~20-60% range.  Here that manual tuning is automated: step sizes are
+% rescaled during burn-in to drive acceptance toward the target, then
+% FROZEN once burn-in ends so the post-burn-in chain is a proper
+% stationary Markov chain (adapting during sampling would break detailed
+% balance).  The post-burn-in sampler is therefore identical in form to
+% Gallen's fixed-step Metropolis-Hastings.
+adapt_steps   = true;   % enable burn-in step-size tuning
+tune_interval = 200;    % iterations between step-size updates
+target_accept = 0.30;   % target acceptance rate (optimal ~0.23-0.44)
 
 %% ========================================================================
 %  SECTION 2: PARAMETER SETUP
 %  ========================================================================
 
-% Parameter ordering:
-% [1] U_pre     - Pre-capture incision rate (m/yr)
-% [2] U_post    - Post-capture incision rate (m/yr)
-% [3] log10(K)  - Log-erodibility
-% [4] n         - Slope exponent
-% [5] m/n       - Concavity ratio (theta)
-% [6] t_capture - Capture timing (years before present)
+% Parameter ordering [6 total]:
+% [1] U_pre      - Pre-capture incision rate (m/yr)
+% [2] U_post     - Post-capture incision rate (m/yr)
+% [3] log10(K)   - Log-erodibility
+% [4] n          - Slope exponent
+% [5] m/n        - Concavity ratio (theta)
+% [6] t_capture  - Capture timing (years BP)
 
-% --- Prior bounds (uniform) ---
+% --- Prior bounds (uniform hard walls) ---
 prior_bounds = [
     1e-6,   5e-4;     % U_pre:     ~0.001 to 0.5 mm/yr
     1e-5,   5e-3;     % U_post:    ~0.01 to 5 mm/yr
     -9,     -4;       % log10(K):  wide range
-    0.5,    10;       % n:         0.5 to 10 (allow high n like Gallen found)
+    0.5,    3;        % n:         tightened to [0.5, 3] (physical range)
     0.3,    0.7;      % m/n:       typical concavity range
     0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
 ];
@@ -116,37 +124,41 @@ prior_bounds = [
 % --- Informative priors from cave constraints ---
 cave_prior = struct();
 cave_prior.use_informative = use_informative_priors;
+
+% Capture timing from cave burial dating
 cave_prior.t_capture_mean  = 2.1e6;    % 2.1 Ma from PNAS paper
 cave_prior.t_capture_std   = 1.0e6;    % +/- 1.0 Ma
+
+% Background incision rate from pre-capture caves
 cave_prior.U_pre_mean      = 1e-5;     % 0.01 mm/yr
 cave_prior.U_pre_std       = 5e-6;     % +/- 0.005 mm/yr
+
+% Post-capture incision rate from lower caves
 cave_prior.U_post_mean     = 1.25e-4;  % 0.125 mm/yr (midpoint of 0.09-0.16)
 cave_prior.U_post_std      = 3.5e-5;   % +/- 0.035 mm/yr
 
-% --- Starting values (near expected MAP for faster convergence) ---
-% Picked from the interior of the posterior region found in previous runs
-% (log10(K) ~ -7 to -8, n ~ 1, m/n ~ 0.55, t_capture ~ 2.2 Ma) so that
-% MCMC doesn't have to climb out of an extreme corner of parameter space.
+% Gaussian prior on n to break the K-n trade-off.
+% Most landscape evolution studies find n in [0.5, 2]; n=1 is the standard.
+cave_prior.n_mean          = 1.0;
+cave_prior.n_std           = 0.5;
+
+% --- Starting values ---
 params_init = [
-    1e-5,     ... % U_pre = 0.01 mm/yr (cave prior mean)
+    1e-5,     ... % U_pre  = 0.01 mm/yr (cave prior mean)
     1.25e-4,  ... % U_post = 0.125 mm/yr (cave prior mean)
-    -6.0,     ... % log10(K) = 1e-6 (central for n=1, gives sensible relief)
-    1.0,      ... % n = 1 (linear stream power; well-posed baseline)
+    -6.0,     ... % log10(K) = 1e-6 (central for n~1)
+    1.0,      ... % n = 1 (linear stream power)
     0.5,      ... % m/n = 0.5 (classical concavity)
     2.1e6     ... % t_capture = 2.1 Ma (cave prior mean)
 ];
 
-% --- MCMC step sizes (tune for ~25-50% acceptance) ---
-% Scaled down from previous run (which got 2.6% acceptance) to improve
-% mixing of the stream-power parameters.  The (log10K, n, m/n) trio has
-% strong correlations that a diagonal proposal handles poorly, so smaller
-% individual steps produce a better-behaved chain.
+% --- MCMC step sizes ---
 p_steps = [
     2e-6,    ... % U_pre   (tightly constrained by cave prior)
-    1.5e-5,  ... % U_post  (tightly constrained by cave prior)
-    0.05,    ... % log10(K)
-    0.05,    ... % n
-    0.008,   ... % m/n
+    1.5e-5,  ... % U_post
+    0.04,    ... % log10(K)
+    0.04,    ... % n
+    0.006,   ... % m/n
     7.5e4    ... % t_capture (75 kyr steps)
 ];
 
@@ -166,20 +178,17 @@ if ~isempty(stream_data_file) && exist(stream_data_file, 'file')
     end
 
     S    = sd.S;
-    Sz   = sd.Sz(:);    % force column vector
-    S_DA = sd.S_DA(:);  % force column vector
+    Sz   = sd.Sz(:);
+    S_DA = sd.S_DA(:);
 
     % Validate that node counts are consistent
     n_nodes = numel(S.IXgrid);
     if length(Sz) ~= n_nodes
         warning('Sz (%d) and S.IXgrid (%d) have different lengths. Re-extracting from S.', ...
             length(Sz), n_nodes);
-        % S_DA and Sz may have been extracted from a different STREAMobj.
-        % Re-extract if the loaded S has the right fields.
         if isfield(sd, 'DEM') && isa(sd.DEM, 'GRIDobj')
             Sz   = double(sd.DEM.Z(S.IXgrid));
         else
-            % Truncate or pad to match S node count
             Sz = Sz(1:min(length(Sz), n_nodes));
             if length(Sz) < n_nodes
                 error('Cannot reconcile Sz length with S: %d vs %d nodes', length(Sz), n_nodes);
@@ -197,23 +206,46 @@ if ~isempty(stream_data_file) && exist(stream_data_file, 'file')
 else
     fprintf('WARNING: No stream data file specified.\n');
     fprintf('Please run prepare_hc_stream_data.m first to create hc_stream_data.mat\n');
-    fprintf('Then set stream_data_file at the top of this script.\n');
-    fprintf('\nExample:\n');
-    fprintf('  sd = prepare_hc_stream_data(''path/to/Basin_80_Data.mat'');\n');
-    fprintf('  % Then set stream_data_file = ''hc_stream_data.mat'';\n');
     return;
+end
+
+% --- Validate and condition the input data -----------------------------
+% TopoToolbox GRIDobj data is normally SINGLE precision.  Left as single,
+% every downstream product (residuals, log-likelihood) is computed in
+% single precision, and a summed chi-square over thousands of nodes loses
+% meaningful accuracy.  Cast to double once, here.
+Sz   = double(Sz(:));
+S_DA = double(S_DA(:));
+
+% A NaN or Inf anywhere in the input silently propagates into the modeled
+% profile and then into the likelihood.  Catch it now rather than after
+% hours of sampling.
+if any(~isfinite(Sz))
+    error(['Sz contains %d non-finite value(s). Fix the DEM / stream ' ...
+           'extraction before running the MCMC.'], sum(~isfinite(Sz)));
+end
+if any(~isfinite(S_DA))
+    error(['S_DA contains %d non-finite value(s). Fix the drainage-area ' ...
+           'grid before running the MCMC.'], sum(~isfinite(S_DA)));
+end
+% Drainage area enters as (1./S_DA).^(m/n); a zero or negative area gives
+% Inf/complex values in the steady-state profile.
+if any(S_DA <= 0)
+    error(['S_DA contains %d non-positive value(s). Drainage area must ' ...
+           'be > 0 at every stream node.'], sum(S_DA <= 0));
 end
 
 % Normalize elevations relative to outlet
 Sz_norm = Sz - min(Sz);
 
 % Stream data error (meters)
-% Should reflect model inadequacy (uniform K, simple two-phase uplift),
-% not just DEM noise.  The model can't match every node, so this is the
-% expected per-node RMS residual at a good fit (~10-15% of total relief).
-stream_err = 200;  % m; tune: lower = tighter fit, higher = more exploration
+stream_err = 200;  % reflects model inadequacy
 n_stream = length(Sz_norm);
 n_cave   = length(cave_ages);
+
+% Hoisted out of the MCMC loop: this vector is constant, so rebuilding it
+% on every iteration is pure overhead.
+stream_sigma = stream_err * ones(n_stream, 1);
 
 fprintf('Data loaded: %d stream nodes, %d cave observations\n', n_stream, n_cave);
 
@@ -222,6 +254,11 @@ fprintf('Data loaded: %d stream nodes, %d cave observations\n', n_stream, n_cave
 %  ========================================================================
 
 total_iter = n_burnin + n_postburn;
+
+% Make sure new MATLAB sessions use different random numbers (as in
+% Gallen's master script: "rng shuffle").  Without this, every fresh
+% MATLAB session would reproduce the identical chain.
+rng('shuffle');
 
 % Storage arrays
 params      = zeros(total_iter, n_params);
@@ -235,17 +272,29 @@ params(1,:) = params_init;
 K_init = 10^params_init(3);
 m_init = params_init(5) * params_init(4);  % m = (m/n) * n
 
+% Build rate/transition vectors for the generalized forward model
+U_rates_init = [params_init(1), params_init(2)];
+t_trans_init = params_init(6);
+
 fprintf('Running initial forward model...\n');
-Z_mod = hc_river_forward_model(S, S_DA, params_init(1), params_init(2), ...
-    params_init(6), K_init, m_init, params_init(4), run_time, dt_forward);
+Z_mod = hc_river_forward_model(S, S_DA, U_rates_init, t_trans_init, ...
+    K_init, m_init, params_init(4), dt_forward);
 
 % Initial cave predictions
-cave_pred = cave_forward_model(cave_ages, params_init(6), ...
-    params_init(1), params_init(2));
+cave_pred = cave_forward_model(cave_ages, U_rates_init, t_trans_init);
 
 % Initial likelihood
 [logL_init, ~, ~] = hc_loglikelihood(Sz_norm, Z_mod, ...
-    stream_err * ones(n_stream, 1), cave_heights, cave_pred, cave_height_err);
+    stream_sigma, cave_heights, cave_pred, cave_height_err);
+
+% If the starting model is already non-finite the whole chain is
+% meaningless, so stop now instead of after hours of sampling.
+if ~isfinite(logL_init)
+    error(['Initial log-likelihood is %s. The forward model returned a ' ...
+           'non-finite profile at the starting parameters -- check ' ...
+           'params_init, prior_bounds and the stream data.'], ...
+           num2str(logL_init));
+end
 
 logL_chain(1) = logL_init;
 accepted(1)   = 1;
@@ -258,7 +307,7 @@ cave_pred_map = cave_pred;
 
 fprintf('Initial log-likelihood: %.2f\n', logL_init);
 
-% --- Diagnostics: compare initial model to observations ---
+% --- Diagnostics ---
 fprintf('\n--- Initial Model vs Observations ---\n');
 fprintf('  Observed elevation range: [%.1f, %.1f] m  (relief = %.1f m)\n', ...
     min(Sz_norm), max(Sz_norm), max(Sz_norm) - min(Sz_norm));
@@ -284,7 +333,11 @@ fprintf('\nStarting MCMC: %d burn-in + %d post-burn-in iterations\n', ...
 %  ========================================================================
 
 tic;
-n_accept = 0;
+n_accept     = 0;
+n_ffail      = 0;   % forward-model failures (caught and rejected)
+n_nonfinite  = 0;   % candidates with non-finite likelihood (rejected)
+accept_window = 0;  % accepts within the current tuning window
+first_err_shown = false;  % print the first forward-model error only
 
 for i = 2:total_iter
     % Progress report
@@ -294,6 +347,22 @@ for i = 2:total_iter
         remaining = (total_iter - i) / rate;
         fprintf('  Iter %d/%d (%.0f/s, ~%.0f s remaining, accept=%.1f%%)\n', ...
             i, total_iter, rate, remaining, 100*n_accept/(i-1));
+    end
+
+    % --- Adaptive step-size tuning during burn-in ---
+    % Automates the manual step tuning Gallen does by trial and error.
+    % Runs at the top of the iteration so it always fires on schedule,
+    % regardless of prior-rejection "continue" statements below.
+    if adapt_steps && i <= n_burnin && i > 2 && mod(i-1, tune_interval) == 0
+        win_acc = accept_window / tune_interval;
+        scale   = exp(win_acc - target_accept);   % >1 too high, <1 too low
+        scale   = min(max(scale, 0.5), 2.0);      % clamp per-update change
+        p_steps = p_steps .* scale;
+        accept_window = 0;
+        if mod(i-1, tune_interval*5) == 0
+            fprintf('    [tune] iter %d: window accept=%.1f%%, step scale=%.3f\n', ...
+                i-1, 100*win_acc, scale);
+        end
     end
 
     % Current parameters
@@ -320,21 +389,45 @@ for i = 2:total_iter
     K_cand = 10^candidate(3);
     m_cand = candidate(5) * candidate(4);  % m = (m/n) * n
 
-    try
-        Z_cand = hc_river_forward_model(S, S_DA, candidate(1), candidate(2), ...
-            candidate(6), K_cand, m_cand, candidate(4), run_time, dt_forward);
+    U_rates_cand = [candidate(1), candidate(2)];
+    t_trans_cand = candidate(6);
 
-        cave_cand = cave_forward_model(cave_ages, candidate(6), ...
-            candidate(1), candidate(2));
+    try
+        Z_cand = hc_river_forward_model(S, S_DA, U_rates_cand, ...
+            t_trans_cand, K_cand, m_cand, candidate(4), dt_forward);
+
+        cave_cand = cave_forward_model(cave_ages, U_rates_cand, t_trans_cand);
 
         % Likelihood
         [logL_cand, ~, ~] = hc_loglikelihood(Sz_norm, Z_cand, ...
-            stream_err * ones(n_stream, 1), cave_heights, cave_cand, cave_height_err);
-    catch
-        % Forward model failed - reject
+            stream_sigma, cave_heights, cave_cand, cave_height_err);
+    catch ME
+        % Forward model failed - reject.  Surface the FIRST error so a
+        % systematic fault (e.g. a typo or a bad data field) cannot
+        % silently reject every candidate for days on end.
+        if ~first_err_shown
+            first_err_shown = true;
+            fprintf(['\n  NOTE: first forward-model failure at iter %d:\n' ...
+                     '        %s\n        (further failures counted silently)\n\n'], ...
+                     i, ME.message);
+        end
         params(i,:) = current;
         logL_chain(i) = logL_chain(i-1);
         accepted(i) = 0;
+        n_ffail = n_ffail + 1;
+        continue;
+    end
+
+    % Guard against a non-finite likelihood BEFORE it reaches the
+    % acceptance test.  MATLAB's min() omits NaN, so min(NaN, 0) returns
+    % 0 and "log(rand) < 0" would accept unconditionally; the NaN would
+    % then enter logL_chain and every later ratio would also be NaN,
+    % turning the remainder of the run into an unconstrained random walk.
+    if ~isfinite(logL_cand)
+        params(i,:) = current;
+        logL_chain(i) = logL_chain(i-1);
+        accepted(i) = 0;
+        n_nonfinite = n_nonfinite + 1;
         continue;
     end
 
@@ -346,6 +439,12 @@ for i = 2:total_iter
     log_alpha = (lp_cand + logL_cand + lq_rev) - ...
                 (lp_current + logL_chain(i-1) + lq_fwd);
 
+    % Belt-and-braces: an undefined ratio must never be treated as a
+    % favourable one (see the min()/NaN note above).
+    if isnan(log_alpha)
+        log_alpha = -Inf;
+    end
+
     % Metropolis-Hastings accept/reject
     if log(rand) < min(log_alpha, 0)
         % Accept
@@ -353,6 +452,7 @@ for i = 2:total_iter
         logL_chain(i) = logL_cand;
         accepted(i) = 1;
         n_accept = n_accept + 1;
+        accept_window = accept_window + 1;
 
         % Update MAP
         logP_cand = lp_cand + logL_cand;
@@ -375,6 +475,30 @@ fprintf('\nMCMC complete: %.0f seconds (%.1f iter/s)\n', elapsed_total, ...
     total_iter / elapsed_total);
 fprintf('Overall acceptance rate: %.1f%%\n', 100 * n_accept / total_iter);
 
+% Acceptance split (burn-in is inflated/tuned; post-burn-in is the chain
+% that actually matters for the posterior).
+acc_post = mean(accepted(n_burnin+1:end));
+fprintf('Post-burn-in acceptance rate: %.1f%%  (target ~%.0f%%)\n', ...
+    100 * acc_post, 100 * target_accept);
+
+if adapt_steps
+    fprintf('Tuned step sizes (frozen after burn-in): %s\n', ...
+        mat2str(p_steps, 3));
+end
+
+if n_ffail > 0
+    fprintf('WARNING: forward model failed on %d/%d iterations (%.2f%%).\n', ...
+        n_ffail, total_iter, 100 * n_ffail / total_iter);
+    fprintf('         If this fraction is large, check parameter bounds / dt.\n');
+end
+
+if n_nonfinite > 0
+    fprintf('WARNING: %d/%d candidates (%.2f%%) had a non-finite likelihood\n', ...
+        n_nonfinite, total_iter, 100 * n_nonfinite / total_iter);
+    fprintf('         and were rejected. A large fraction means the forward\n');
+    fprintf('         model is overflowing somewhere in the sampled range.\n');
+end
+
 %% ========================================================================
 %  SECTION 6: EXTRACT POST-BURN-IN RESULTS
 %  ========================================================================
@@ -382,10 +506,11 @@ fprintf('Overall acceptance rate: %.1f%%\n', 100 * n_accept / total_iter);
 params_post = params(n_burnin+1:end, :);
 logL_post   = logL_chain(n_burnin+1:end);
 
-% Compute statistics
-param_names = {'U_{pre} (m/yr)', 'U_{post} (m/yr)', 'log_{10}(K)', ...
-               'n', 'm/n', 't_{capture} (yr)'};
-param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];  % for display (mm/yr, mm/yr, -, -, -, Ma)
+% Compute statistics.  Units in param_names must match param_scale:
+% rates are displayed in mm/yr (scale 1e3) and t_capture in Ma (1e-6).
+param_names = {'U_{pre} (mm/yr)', 'U_{post} (mm/yr)', 'log_{10}(K)', ...
+               'n', 'm/n', 't_{capture} (Ma)'};
+param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];
 
 fprintf('\n========== POSTERIOR SUMMARY ==========\n');
 fprintf('%-20s %12s %12s %20s %20s\n', 'Parameter', 'MAP', 'Median', '68% CI', '95% CI');

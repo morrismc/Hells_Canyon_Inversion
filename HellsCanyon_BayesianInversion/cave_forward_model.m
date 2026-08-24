@@ -1,24 +1,26 @@
-function [cave_heights_pred] = cave_forward_model(cave_ages, t_capture, ...
-    U_pre, U_post)
+function [cave_heights_pred] = cave_forward_model(cave_ages, U_rates, ...
+    t_transitions)
 % CAVE_FORWARD_MODEL  Predict the height of cave sediment deposits above
-% the modern river level given a two-phase incision history.
+% the modern river level given a multi-phase incision history.
 %
-% Model:
-%   Before capture (cave_age > t_capture):
-%     height = U_post * t_capture + U_pre * (cave_age - t_capture)
+% General model for N phases:
+%   Phase 1 (oldest):  t > t_transitions(1),              rate = U_rates(1)
+%   Phase 2:           t_transitions(1) > t > t_transitions(2), rate = U_rates(2)
+%   ...
+%   Phase N (present): t < t_transitions(end),             rate = U_rates(end)
 %
-%   After capture (cave_age <= t_capture):
-%     height = U_post * cave_age
-%
-% The logic: a cave at a given age records the river's position when
-% the cave was active. The total drop below that position is the
-% cumulative incision since the cave was abandoned.
+% For each cave, the predicted height above the modern river is the total
+% incision accumulated from the cave's abandonment age to the present,
+% i.e.  sum over all phases of  U_phase * (time spent in that phase).
 %
 % Inputs:
-%   cave_ages   - Vector of cave burial ages (years before present)
-%   t_capture   - Time of drainage capture (years before present)
-%   U_pre       - Pre-capture incision rate (m/yr)
-%   U_post      - Post-capture incision rate (m/yr)
+%   cave_ages       - Vector of cave burial ages (years before present)
+%   U_rates         - Vector of incision rates from oldest to youngest (m/yr)
+%                     2-phase: [U_pre, U_post]
+%                     3-phase: [U_pre, U_mid, U_post]
+%   t_transitions   - Transition times in years BP, strictly decreasing.
+%                     2-phase: [t_capture]
+%                     3-phase: [t1, t2]  where t1 > t2.
 %
 % Outputs:
 %   cave_heights_pred - Predicted height above modern river (m)
@@ -28,16 +30,21 @@ function [cave_heights_pred] = cave_forward_model(cave_ages, t_capture, ...
 
 cave_heights_pred = zeros(size(cave_ages));
 
+% Phase boundaries: [Inf, t1, t2, ..., 0]
+t_bounds = [Inf, t_transitions(:)', 0];
+n_phases = length(U_rates);
+
 for i = 1:length(cave_ages)
-    if cave_ages(i) > t_capture
-        % Cave formed before capture event
-        % Total incision = fast phase (t_capture duration) + slow phase (remainder)
-        cave_heights_pred(i) = U_post * t_capture + ...
-                               U_pre * (cave_ages(i) - t_capture);
-    else
-        % Cave formed after capture event - only fast phase
-        cave_heights_pred(i) = U_post * cave_ages(i);
+    A = cave_ages(i);
+    h = 0;
+    for p = 1:n_phases
+        upper = min(A, t_bounds(p));
+        lower = t_bounds(p + 1);
+        if upper > lower
+            h = h + U_rates(p) * (upper - lower);
+        end
     end
+    cave_heights_pred(i) = h;
 end
 
 end
