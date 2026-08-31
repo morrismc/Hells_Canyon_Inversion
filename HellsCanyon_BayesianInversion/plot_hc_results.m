@@ -64,7 +64,13 @@ for j = 1:n_params
                 if isfield(cave_prior,'U_post_mean') && cave_prior.U_post_std > 0
                     prior_pdf = normpdf(x_range, cave_prior.U_post_mean, cave_prior.U_post_std);
                 end
-            case 4  % n
+            case 3  % ksn_ref (relict channel steepness)
+                if isfield(cave_prior,'ksn_ref_mean') && ...
+                   isfield(cave_prior,'ksn_ref_std') && cave_prior.ksn_ref_std > 0
+                    prior_pdf = normpdf(x_range, cave_prior.ksn_ref_mean, ...
+                                        cave_prior.ksn_ref_std);
+                end
+            case 4  % n (skipped when n_std == 0, i.e. uniform prior)
                 if isfield(cave_prior,'n_mean') && isfield(cave_prior,'n_std') && cave_prior.n_std > 0
                     prior_pdf = normpdf(x_range, cave_prior.n_mean, cave_prior.n_std);
                 end
@@ -99,14 +105,16 @@ saveas(fig1, fullfile(output_dir, ['diagnostics_' fileTag '.png']));
 %% Figure 2: Key posterior pairs and correlations
 fig2 = figure('Position', [100, 100, 1200, 800]);
 
-% K vs n
+% ksn_ref vs n -- these are the actual SAMPLING coordinates.  If the
+% reparameterization did its job this cloud should look roughly round;
+% a narrow curved ridge here means the chain is still mixing badly.
 subplot(2,3,1)
 scatter(params_post(:,3), params_post(:,4), 2, logL_chain(n_burnin+1:end), ...
     'filled', 'MarkerFaceAlpha', 0.1);
 hold on
 plot(params_map(3), params_map(4), 'rp', 'MarkerSize', 15, 'MarkerFaceColor', 'r');
-xlabel('log_{10}(K)'); ylabel('n');
-title('K vs n Trade-off');
+xlabel('k_{sn} relict'); ylabel('n');
+title('Sampling coordinates: k_{sn} vs n');
 colorbar; colormap(parula);
 
 % t_capture vs U_post
@@ -148,12 +156,15 @@ end
 xlabel('n (slope exponent)'); ylabel('PDF');
 title('Slope Exponent Posterior');
 
-% K histogram
+% Erodibility is DERIVED (K = U_pre / ksn_ref^n), evaluated per sample so
+% the U_pre / ksn_ref / n covariance propagates into its posterior.
 subplot(2,3,5)
-histogram(params_post(:,3), 50, 'Normalization', 'pdf', ...
-    'FaceColor', [0.7 0.4 0.7], 'EdgeColor', 'none');
-xlabel('log_{10}(K)'); ylabel('PDF');
-title('Erodibility Posterior');
+logK_post = log10(hc_derive_K(params_post));
+histogram(logK_post, 50, 'Normalization', 'pdf', ...
+    'FaceColor', [0.7 0.4 0.7], 'EdgeColor', 'none'); hold on
+xline(median(logK_post), 'r-', 'LineWidth', 2);
+xlabel('log_{10}(K)  [derived]'); ylabel('PDF');
+title('Erodibility Posterior (derived)');
 
 % U_pre vs U_post
 subplot(2,3,6)

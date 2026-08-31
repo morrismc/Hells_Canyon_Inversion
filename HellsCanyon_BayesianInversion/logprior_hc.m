@@ -6,7 +6,10 @@ function [lp] = logprior_hc(candidate, prior_bounds, cave_prior)
 % exponent n.
 %
 % 6-parameter ordering:
-%   [U_pre, U_post, log10_K, n, m_over_n, t_capture]
+%   [U_pre, U_post, ksn_ref, n, m_over_n, t_capture]
+%
+% NOTE: erodibility K is NOT a sampled parameter.  It is derived by the
+% caller as K = U_pre / ksn_ref^n.  See main_hc_bayes_inversion.m.
 %
 % Inputs:
 %   candidate    - [1 x 6] vector of candidate parameters
@@ -16,7 +19,9 @@ function [lp] = logprior_hc(candidate, prior_bounds, cave_prior)
 %                  .t_capture_mean, .t_capture_std
 %                  .U_pre_mean, .U_pre_std
 %                  .U_post_mean, .U_post_std
+%                  .ksn_ref_mean, .ksn_ref_std - relict steepness
 %                  .n_mean, .n_std   - Gaussian prior on slope exponent
+%                                      (set n_std = 0 to disable)
 %
 % Outputs:
 %   lp           - Log-prior probability
@@ -44,7 +49,18 @@ end
 if nargin >= 3 && ~isempty(cave_prior) && cave_prior.use_informative
 
     % Parameter indices:
-    % 1=U_pre, 2=U_post, 3=log10_K, 4=n, 5=m/n, 6=t_capture
+    % 1=U_pre, 2=U_post, 3=ksn_ref, 4=n, 5=m/n, 6=t_capture
+    % (K is derived downstream as U_pre / ksn_ref^n, never sampled.)
+
+    % Informative prior on relict channel steepness, measured directly
+    % from above-knickpoint channel segments.  This is what makes the
+    % reparameterization work: ksn_ref is observable, whereas log10(K)
+    % was not and had to be given an arbitrary uniform box.
+    if isfield(cave_prior, 'ksn_ref_mean') && isfield(cave_prior, 'ksn_ref_std') ...
+            && cave_prior.ksn_ref_std > 0
+        lp = lp - 0.5 * ((candidate(3) - cave_prior.ksn_ref_mean) / ...
+             cave_prior.ksn_ref_std)^2;
+    end
 
     % Informative prior on t_capture from cave burial ages
     if isfield(cave_prior, 't_capture_mean') && cave_prior.t_capture_std > 0
