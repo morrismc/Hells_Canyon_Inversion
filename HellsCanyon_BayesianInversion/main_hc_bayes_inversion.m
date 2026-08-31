@@ -28,10 +28,29 @@
 % Parameters estimated [6 total]:
 %   (1) U_pre      - Pre-capture incision rate (m/yr)
 %   (2) U_post     - Post-capture incision rate (m/yr)
-%   (3) log10(K)   - Log-erodibility
+%   (3) ksn_ref    - Relict-channel steepness index
 %   (4) n          - Slope exponent
 %   (5) m/n        - Concavity ratio
 %   (6) t_capture  - Capture timing (years)
+%
+% PARAMETERIZATION NOTE -- K is DERIVED, not sampled:
+%
+%       K = U_pre / ksn_ref^n
+%
+% Earlier versions sampled log10(K) directly.  That is badly conditioned
+% here: at steady state the relict channel has ksn = (U_pre/K)^(1/n), so
+% the K that fits the data moves by ~6 orders of magnitude as n varies.
+% Sampling log10(K) and n as independent coordinates therefore proposes
+% ACROSS a very narrow curved ridge, which produced integrated
+% autocorrelation times of ~5400 (ESS ~9 from 50,000 samples), and the
+% [-9,-4] box on log10(K) excluded the solution the ksn data implies
+% (log10 K ~ -12.5 at n ~ 3.7) altogether.
+%
+% Sampling ksn_ref instead removes both problems: it is directly
+% observable (measured 113.3 +/- 33.8 from 38 relict channel segments),
+% it is only weakly correlated with n, and K can no longer be boxed out
+% of its physically required range because it is computed rather than
+% bounded.
 %
 % Required files on MATLAB path:
 %   hc_river_forward_model.m
@@ -110,7 +129,7 @@ target_accept = 0.30;   % target acceptance rate (optimal ~0.23-0.44)
 % Parameter ordering [6 total]:
 % [1] U_pre      - Pre-capture incision rate (m/yr)
 % [2] U_post     - Post-capture incision rate (m/yr)
-% [3] log10(K)   - Log-erodibility
+% [3] ksn_ref    - Relict channel steepness  (K = U_pre / ksn_ref^n)
 % [4] n          - Slope exponent
 % [5] m/n        - Concavity ratio (theta)
 % [6] t_capture  - Capture timing (years BP)
@@ -119,8 +138,8 @@ target_accept = 0.30;   % target acceptance rate (optimal ~0.23-0.44)
 prior_bounds = [
     1e-6,   5e-4;     % U_pre:     ~0.001 to 0.5 mm/yr
     1e-5,   5e-3;     % U_post:    ~0.01 to 5 mm/yr
-    -15,     -4;       % log10(K):  wide range
-    0.5,    8;        % n:         tightened to [0.5, 3] (physical range)
+    20,     500;      % ksn_ref:   relict steepness (measured ~113)
+    0.5,    8;        % n:         wide; ksn data implies ~3.7
     0.3,    0.8;      % m/n:       typical concavity range
     0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
 ];
@@ -141,27 +160,56 @@ cave_prior.U_pre_std       = 5e-6;     % +/- 0.005 mm/yr
 cave_prior.U_post_mean     = 1.25e-4;  % 0.125 mm/yr (midpoint of 0.09-0.16)
 cave_prior.U_post_std      = 3.5e-5;   % +/- 0.035 mm/yr
 
-% Gaussian prior on n to break the K-n trade-off.
-% Most landscape evolution studies find n in [0.5, 2]; n=1 is the standard.
-cave_prior.n_mean          = 1.0;
-cave_prior.n_std           = 1.0;
+% Relict channel steepness, measured from 38 above-knickpoint segments
+% in ksnTable.xlsx (mean 113.3, std 33.8; see ksn_erosion_analysis.m).
+%
+% The std is deliberately inflated to 60 rather than the measured 33.8.
+% ksn depends on the reference concavity used to compute it, and the
+% ksnTable was built with TAK's theta_ref (0.45 by default) whereas the
+% model's own normalization is m/n, which the chain samples freely.  The
+% widened prior absorbs that normalization mismatch and keeps ksn_ref
+% acting mainly as a well-scaled sampling coordinate rather than a hard
+% constraint.
+%
+% ACTION: confirm the theta_ref actually used to build ksnTable.xlsx.  If
+% it differs materially from the posterior m/n, widen this further or
+% disable it entirely by setting ksn_ref_std = 0.
+cave_prior.ksn_ref_mean    = 113.3;
+cave_prior.ksn_ref_std     = 60.0;
+
+% NO informative prior on n.  Previous runs used n ~ N(1, 0.5), which was
+% fighting the data: the measured ksn ratio (227.4/113.3 = 2.01) together
+% with the cave rate ratio (U_post/U_pre = 13.2) implies
+%       n = ln(13.2)/ln(2.01) = 3.7  [3.3 - 4.2]
+% i.e. 5.4 sigma from that prior's mean, while the old n bound of 3
+% excluded it outright.  Leaving n uninformative lets the river profile
+% determine it independently, so the ksn-derived 3.7 remains a genuine
+% external check rather than an assumption folded into the prior.
+% (Set n_std > 0 below to re-enable a Gaussian prior on n.)
+cave_prior.n_mean          = 3.7;
+cave_prior.n_std           = 0;     % 0 = disabled (uniform within bounds)
 
 % --- Starting values ---
+% Started near the approximate solution, as Gallen does in bayes_profiler.
+% ksn_ref and n come from the independent ksn analysis; the rates and
+% timing from the previous run's posterior medians.
 params_init = [
-    1e-5,     ... % U_pre  = 0.01 mm/yr (cave prior mean)
-    1.25e-4,  ... % U_post = 0.125 mm/yr (cave prior mean)
-    -6.0,     ... % log10(K) = 1e-6 (central for n~1)
-    1.0,      ... % n = 1 (linear stream power)
-    0.5,      ... % m/n = 0.5 (classical concavity)
-    2.1e6     ... % t_capture = 2.1 Ma (cave prior mean)
+    1.17e-5,  ... % U_pre   = 0.0117 mm/yr (posterior median)
+    1.55e-4,  ... % U_post  = 0.155 mm/yr  (posterior median)
+    113.3,    ... % ksn_ref = measured relict steepness
+    3.7,      ... % n       = implied by ksn ratio + cave rate ratio
+    0.6,      ... % m/n     = previous posterior median
+    2.19e6    ... % t_capture = 2.19 Ma (posterior median)
 ];
 
 % --- MCMC step sizes ---
+% Only the RELATIVE proportions matter: the burn-in tuner rescales the
+% whole vector by one shared factor to hit the target acceptance rate.
 p_steps = [
     2e-6,    ... % U_pre   (tightly constrained by cave prior)
     1.5e-5,  ... % U_post
-    0.04,    ... % log10(K)
-    0.04,    ... % n
+    5.0,     ... % ksn_ref (~0.08 of its prior std)
+    0.10,    ... % n       (wider bound now: [0.5, 8])
     0.006,   ... % m/n
     7.5e4    ... % t_capture (75 kyr steps)
 ];
@@ -272,9 +320,12 @@ accepted    = zeros(total_iter, 1);
 % Initialize
 params(1,:) = params_init;
 
-% Run initial forward model
-K_init = 10^params_init(3);
+% Run initial forward model.
+% K is DERIVED from the sampled steepness: K = U_pre / ksn_ref^n.
+K_init = params_init(1) / params_init(3)^params_init(4);
 m_init = params_init(5) * params_init(4);  % m = (m/n) * n
+fprintf('Derived K at start: %.3e  (ksn_ref=%.1f, n=%.2f)\n', ...
+        K_init, params_init(3), params_init(4));
 
 % Build rate/transition vectors for the generalized forward model
 U_rates_init = [params_init(1), params_init(2)];
@@ -389,8 +440,9 @@ for i = 2:total_iter
     % Compute prior for current
     lp_current = logprior_hc(current, prior_bounds, cave_prior);
 
-    % Run forward model with candidate parameters
-    K_cand = 10^candidate(3);
+    % Run forward model with candidate parameters.
+    % K is derived from ksn_ref and n, never sampled directly.
+    K_cand = candidate(1) / candidate(3)^candidate(4);
     m_cand = candidate(5) * candidate(4);  % m = (m/n) * n
 
     U_rates_cand = [candidate(1), candidate(2)];
@@ -512,7 +564,7 @@ logL_post   = logL_chain(n_burnin+1:end);
 
 % Compute statistics.  Units in param_names must match param_scale:
 % rates are displayed in mm/yr (scale 1e3) and t_capture in Ma (1e-6).
-param_names = {'U_{pre} (mm/yr)', 'U_{post} (mm/yr)', 'log_{10}(K)', ...
+param_names = {'U_{pre} (mm/yr)', 'U_{post} (mm/yr)', 'k_{sn} relict', ...
                'n', 'm/n', 't_{capture} (Ma)'};
 param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];
 
@@ -530,10 +582,31 @@ for j = 1:n_params
         param_names{j}, map_val, med_val, ci68(1), ci68(2), ci95(1), ci95(2));
 end
 
-% K in real space
-K_post = 10.^params_post(:,3);
-fprintf('\nK (real space): median = %.2e, 68%% CI = [%.2e, %.2e]\n', ...
-    median(K_post), prctile(K_post, 16), prctile(K_post, 84));
+% K is a DERIVED quantity: K = U_pre / ksn_ref^n, evaluated per sample so
+% its posterior correctly propagates the U_pre / ksn_ref / n covariance.
+K_post   = params_post(:,1) ./ params_post(:,3).^params_post(:,4);
+K_map    = params_map(1) / params_map(3)^params_map(4);
+logK_post = log10(K_post);
+
+fprintf('\nDerived K = U_pre / ksn_ref^n :\n');
+fprintf('  MAP    : %.3e   (log10 K = %.2f)\n', K_map, log10(K_map));
+fprintf('  median : %.3e   (log10 K = %.2f)\n', ...
+    median(K_post), median(logK_post));
+fprintf('  68%% CI : [%.3e, %.3e]\n', ...
+    prctile(K_post, 16), prctile(K_post, 84));
+fprintf('  95%% CI : [%.3e, %.3e]\n', ...
+    prctile(K_post, 2.5), prctile(K_post, 97.5));
+
+% Independent cross-check against the ksn analysis (uniform-K assumption)
+fprintf('\nCross-check vs ksn_erosion_analysis (independent of profile):\n');
+fprintf('  ksn-implied n      : 3.7  [3.3 - 4.2]\n');
+fprintf('  profile posterior n: %.2f [%.2f - %.2f]\n', ...
+    median(params_post(:,4)), prctile(params_post(:,4), 2.5), ...
+    prctile(params_post(:,4), 97.5));
+fprintf('  measured ksn relict: 113.3 +/- 33.8\n');
+fprintf('  posterior ksn_ref  : %.1f [%.1f - %.1f]\n', ...
+    median(params_post(:,3)), prctile(params_post(:,3), 2.5), ...
+    prctile(params_post(:,3), 97.5));
 
 %% ========================================================================
 %  SECTION 7: SAVE RESULTS

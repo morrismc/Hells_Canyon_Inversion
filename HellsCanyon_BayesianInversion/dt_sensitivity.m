@@ -1,4 +1,12 @@
 %% dt_sensitivity.m
+%
+% IMPORTANT -- dt sensitivity depends strongly on n, so the earlier result
+% that cleared dt = 100,000 does NOT carry over.  That test ran at n ~ 0.6.
+% For n > 1 the stream-power equation is shock-forming: knickpoints steepen
+% as they migrate instead of spreading out, and the implicit scheme needs a
+% finer step to place them correctly.  With the ksn analysis implying
+% n ~ 3.7, RE-RUN this before adopting any coarse dt -- and repeat it at the
+% high-K edge of the posterior, since knickpoint celerity scales with K.
 load('params_HC_capture.mat');
 sd = load('hc_stream_data.mat'); sd = sd.stream_data;
 S = sd.S; S_DA = double(sd.S_DA(:));
@@ -10,7 +18,7 @@ Zs  = zeros(numel(S_DA), numel(dts));  tt = zeros(size(dts));
 for k = 1:numel(dts)
     tic;
     Zs(:,k) = hc_river_forward_model(S, S_DA, [p(1) p(2)], p(6), ...
-                                     10^p(3), p(5)*p(4), p(4), dts(k));
+                                     hc_derive_K(p), p(5)*p(4), p(4), dts(k));
     tt(k) = toc;
 end
 

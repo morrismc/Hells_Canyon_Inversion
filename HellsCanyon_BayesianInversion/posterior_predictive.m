@@ -5,8 +5,9 @@ S = sd.S;  Sz = double(sd.Sz(:));  S_DA = double(sd.S_DA(:));
 Sz_norm = Sz - min(Sz);
 dt_forward = 25000;
 
+% K is derived from ksn_ref and n (see hc_derive_K.m), not sampled.
 fwd = @(p) hc_river_forward_model(S, S_DA, [p(1) p(2)], p(6), ...
-                                  10^p(3), p(5)*p(4), p(4), dt_forward);
+                                  hc_derive_K(p), p(5)*p(4), p(4), dt_forward);
 
 % --- median-parameter model ---
 p_med = median(params_post, 1);
