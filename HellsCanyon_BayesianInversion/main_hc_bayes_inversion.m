@@ -48,6 +48,10 @@
 
 clear; close all; clc;
 
+addpath(genpath("C:\Users\mmorriss\Documents\matlab\topotoolbox-master"))
+addpath(genpath("C:\Users\mmorriss\Documents\matlab\Topographic-Analysis-Kit-master"))
+addpath(genpath("C:\Users\mmorriss\Documents\matlab\TT_shortcourse_6august2016"))
+addpath(genpath("C:\Users\mmorriss\Documents\matlab\knickdisttest_morriss"))
 %% ========================================================================
 %  SECTION 1: USER CONFIGURATION
 %  ========================================================================
@@ -82,8 +86,8 @@ cave_height_err = cave_data(:,4);
 use_informative_priors = true;
 
 % --- MCMC Settings ---
-n_burnin   = 1e4;    % Burn-in iterations (increase for production)
-n_postburn = 1e5;    % Post-burn-in iterations (increase for production)
+n_burnin   = 5e3;    % Burn-in iterations (increase for production)
+n_postburn = 5e4;    % Post-burn-in iterations (increase for production)
 dt_forward = 25000;  % Forward model time step (years)
 
 % --- Adaptive proposal tuning (burn-in ONLY) ---
@@ -115,9 +119,9 @@ target_accept = 0.30;   % target acceptance rate (optimal ~0.23-0.44)
 prior_bounds = [
     1e-6,   5e-4;     % U_pre:     ~0.001 to 0.5 mm/yr
     1e-5,   5e-3;     % U_post:    ~0.01 to 5 mm/yr
-    -9,     -4;       % log10(K):  wide range
-    0.5,    3;        % n:         tightened to [0.5, 3] (physical range)
-    0.3,    0.7;      % m/n:       typical concavity range
+    -15,     -4;       % log10(K):  wide range
+    0.5,    8;        % n:         tightened to [0.5, 3] (physical range)
+    0.3,    0.8;      % m/n:       typical concavity range
     0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
 ];
 
@@ -140,7 +144,7 @@ cave_prior.U_post_std      = 3.5e-5;   % +/- 0.035 mm/yr
 % Gaussian prior on n to break the K-n trade-off.
 % Most landscape evolution studies find n in [0.5, 2]; n=1 is the standard.
 cave_prior.n_mean          = 1.0;
-cave_prior.n_std           = 0.5;
+cave_prior.n_std           = 1.0;
 
 % --- Starting values ---
 params_init = [
