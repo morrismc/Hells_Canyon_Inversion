@@ -105,9 +105,18 @@ cave_height_err = cave_data(:,4);
 use_informative_priors = true;
 
 % --- MCMC Settings ---
-n_burnin   = 5e3;    % Burn-in iterations (increase for production)
-n_postburn = 5e4;    % Post-burn-in iterations (increase for production)
-dt_forward = 25000;  % Forward model time step (years)
+% Production settings.  Sized from the measured IACT (~450 for the worst
+% parameter, m/n and ksn_ref) with headroom: see the truncation caveat in
+% ess_check.  n_burnin raised to 2e4 because n needed several thousand
+% iterations to travel from its 3.7 start to ~6 and settle.
+n_burnin   = 2e4;    % Burn-in iterations
+n_postburn = 2e5;    % Post-burn-in iterations
+
+% dt = 100,000 validated against a 6,250 yr reference AT n ~ 6 (the
+% shock-forming regime), giving 0.41 m RMS / 3.90 m max deviation against
+% a stream_err of 200 m -- a ~500x margin -- for a 2.7x cheaper forward
+% model.  Do NOT raise this further without re-running dt_sensitivity.
+dt_forward = 100000; % Forward model time step (years)
 
 % --- Adaptive proposal tuning (burn-in ONLY) ---
 % NOTE: Gallen & Fernandez-Blanco (2021) hand-tune FIXED step sizes by
@@ -139,7 +148,9 @@ prior_bounds = [
     1e-6,   5e-4;     % U_pre:     ~0.001 to 0.5 mm/yr
     1e-5,   5e-3;     % U_post:    ~0.01 to 5 mm/yr
     20,     500;      % ksn_ref:   relict steepness (measured ~113)
-    0.5,    8;        % n:         wide; ksn data implies ~3.7
+    0.5,    12;       % n:         raised from 8; posterior sits at ~6 and
+                      %            must not be able to press the ceiling
+                      %            (Gallen's bayes_profiler allowed n to 20)
     0.3,    0.8;      % m/n:       typical concavity range
     0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
 ];
@@ -597,16 +608,39 @@ fprintf('  68%% CI : [%.3e, %.3e]\n', ...
 fprintf('  95%% CI : [%.3e, %.3e]\n', ...
     prctile(K_post, 2.5), prctile(K_post, 97.5));
 
-% Independent cross-check against the ksn analysis (uniform-K assumption)
-fprintf('\nCross-check vs ksn_erosion_analysis (independent of profile):\n');
-fprintf('  ksn-implied n      : 3.7  [3.3 - 4.2]\n');
-fprintf('  profile posterior n: %.2f [%.2f - %.2f]\n', ...
+% --- Independent cross-check against the ksn analysis -------------------
+% Under uniform K and steady state in both reaches,
+%       ksn_adjusted/ksn_relict = (U_post/U_pre)^(1/n)
+% so the measured steepness ratio implies
+%       n = ln(U_post/U_pre) / ln(ksn_adjusted/ksn_relict).
+%
+% This is recomputed from THIS run's posterior rates, per sample, rather
+% than hardcoded: the implied n depends on U_post/U_pre, which the profile
+% is free to move.  (Hardcoding it against the old cave-prior rates made
+% the two estimates look far more discrepant than they are.)
+ksn_adj_obs = 227.4;    % mean of 38 below-knickpoint segments
+ksn_rel_obs = 113.3;    % mean of 38 above-knickpoint segments
+ksn_rel_sd  = 33.8;
+
+n_implied = log(params_post(:,2) ./ params_post(:,1)) ./ ...
+            log(ksn_adj_obs / ksn_rel_obs);
+
+fprintf('\nCross-check vs ksn_erosion_analysis:\n');
+fprintf('  ksn-implied n (from posterior rates): %.2f [%.2f - %.2f]\n', ...
+    median(n_implied), prctile(n_implied, 2.5), prctile(n_implied, 97.5));
+fprintf('  profile posterior n                 : %.2f [%.2f - %.2f]\n', ...
     median(params_post(:,4)), prctile(params_post(:,4), 2.5), ...
     prctile(params_post(:,4), 97.5));
-fprintf('  measured ksn relict: 113.3 +/- 33.8\n');
-fprintf('  posterior ksn_ref  : %.1f [%.1f - %.1f]\n', ...
+fprintf('  measured ksn relict                 : %.1f +/- %.1f\n', ...
+    ksn_rel_obs, ksn_rel_sd);
+fprintf('  posterior ksn_ref                   : %.1f [%.1f - %.1f]\n', ...
     median(params_post(:,3)), prctile(params_post(:,3), 2.5), ...
     prctile(params_post(:,3), 97.5));
+fprintf(['  NOTE: ksn above was measured at TAK theta_ref = 0.45, whereas\n' ...
+         '        the model normalizes at m/n = %.2f.  The two segments sit\n' ...
+         '        at different drainage areas, so the RATIO is not invariant\n' ...
+         '        to that choice -- treat this as an approximate check.\n'], ...
+         median(params_post(:,5)));
 
 %% ========================================================================
 %  SECTION 7: SAVE RESULTS
