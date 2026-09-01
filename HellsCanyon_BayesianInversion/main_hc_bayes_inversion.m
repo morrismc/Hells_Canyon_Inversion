@@ -106,7 +106,7 @@ use_informative_priors = true;
 
 % --- MCMC Settings ---
 n_burnin   = 5e3;    % Burn-in iterations (increase for production)
-n_postburn = 5e4;    % Post-burn-in iterations (increase for production)
+n_postburn = 2000;    % Post-burn-in iterations (increase for production)
 dt_forward = 25000;  % Forward model time step (years)
 
 % --- Adaptive proposal tuning (burn-in ONLY) ---
@@ -139,7 +139,7 @@ prior_bounds = [
     1e-6,   5e-4;     % U_pre:     ~0.001 to 0.5 mm/yr
     1e-5,   5e-3;     % U_post:    ~0.01 to 5 mm/yr
     20,     500;      % ksn_ref:   relict steepness (measured ~113)
-    0.5,    8;        % n:         wide; ksn data implies ~3.7
+    0.5,    12;        % n:         wide; ksn data implies ~3.7
     0.3,    0.8;      % m/n:       typical concavity range
     0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
 ];
