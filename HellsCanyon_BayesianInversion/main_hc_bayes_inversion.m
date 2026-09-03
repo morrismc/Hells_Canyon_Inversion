@@ -137,13 +137,14 @@ target_accept = 0.30;   % target acceptance rate (optimal ~0.23-0.44)
 %  SECTION 2: PARAMETER SETUP
 %  ========================================================================
 
-% Parameter ordering [6 total]:
-% [1] U_pre      - Pre-capture incision rate (m/yr)
-% [2] U_post     - Post-capture incision rate (m/yr)
+% Parameter ordering [7 total]:
+% [1] U_pre      - Pre-capture incision rate AT THE OUTLET (m/yr)
+% [2] U_post     - Post-capture incision rate AT THE OUTLET (m/yr)
 % [3] ksn_ref    - Relict channel steepness  (K = U_pre / ksn_ref^n)
 % [4] n          - Slope exponent
 % [5] m/n        - Concavity ratio (theta)
 % [6] t_capture  - Capture timing (years BP)
+% [7] U_grad     - Spatial uplift gradient (see hc_uplift_pattern.m)
 
 % --- Prior bounds (uniform hard walls) ---
 prior_bounds = [
@@ -155,6 +156,9 @@ prior_bounds = [
                       %            (Gallen's bayes_profiler allowed n to 20)
     0.3,    0.8;      % m/n:       typical concavity range
     0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
+   -0.9,    2.0;      % U_grad:    0 = uniform (previous model).  Lower
+                      %            bound > -1 keeps the uplift field
+                      %            positive everywhere.
 ];
 
 % --- Informative priors from cave constraints ---
@@ -206,28 +210,75 @@ cave_prior.n_std           = 0;     % 0 = disabled (uniform within bounds)
 % Started near the approximate solution, as Gallen does in bayes_profiler.
 % ksn_ref and n come from the independent ksn analysis; the rates and
 % timing from the previous run's posterior medians.
+% U_grad starts at 0, i.e. spatially uniform uplift.  The chain therefore
+% starts from the previously validated model and has to discover for
+% itself whether a gradient improves the fit.
 params_init = [
-    1.17e-5,  ... % U_pre   = 0.0117 mm/yr (posterior median)
-    1.55e-4,  ... % U_post  = 0.155 mm/yr  (posterior median)
-    113.3,    ... % ksn_ref = measured relict steepness
-    3.7,      ... % n       = implied by ksn ratio + cave rate ratio
-    0.6,      ... % m/n     = previous posterior median
-    2.19e6    ... % t_capture = 2.19 Ma (posterior median)
+    4.9e-6,   ... % U_pre   = 0.0049 mm/yr (200k-run posterior median)
+    1.53e-4,  ... % U_post  = 0.153 mm/yr  (200k-run posterior median)
+    142.6,    ... % ksn_ref = 200k-run posterior median
+    5.55,     ... % n       = 200k-run posterior median
+    0.595,    ... % m/n     = 200k-run posterior median
+    2.40e6,   ... % t_capture = 2.40 Ma (200k-run posterior median)
+    0.0       ... % U_grad  = 0 -> spatially uniform (see note above)
 ];
 
 % --- MCMC step sizes ---
 % Only the RELATIVE proportions matter: the burn-in tuner rescales the
 % whole vector by one shared factor to hit the target acceptance rate.
+% STAGE 1 of the mixing fix.  These are ~0.4x the posterior standard
+% deviation measured from the 200,000-iteration run, which is near the
+% efficient range for a random-walk Metropolis proposal.
+%
+% The previous values were ~0.03 sigma for ksn_ref, n, m/n and t_capture
+% -- roughly 10x too small.  That is why post-burn-in acceptance drifted up
+% to 50.9% (too-small steps are accepted almost always) and why IACT sat
+% near 9000 for those four parameters while U_post, whose step happened to
+% land at a sensible 0.33 sigma, mixed 6x better at IACT 1625.  For a
+% random walk the autocorrelation scales roughly as (sigma/step)^2, so a
+% 10x scaling error costs ~100x in IACT.
+%
+% NOTE the burn-in tuner scales this whole vector by ONE shared factor, so
+% it can correct the overall size but never the relative proportions
+% between parameters -- which is exactly the error it failed to fix last
+% run.  Getting these ratios right by hand (or via 'covariance' mode
+% below) is what actually buys the mixing.
 p_steps = [
-    2e-6,    ... % U_pre   (tightly constrained by cave prior)
-    1.5e-5,  ... % U_post
-    5.0,     ... % ksn_ref (~0.08 of its prior std)
-    0.10,    ... % n       (wider bound now: [0.5, 8])
-    0.006,   ... % m/n
-    7.5e4    ... % t_capture (75 kyr steps)
+    1.1e-6,  ... % U_pre     (0.4 * posterior sigma 2.7e-6)
+    5.4e-6,  ... % U_post    (0.4 * 1.3e-5)
+    17.0,    ... % ksn_ref   (0.4 * 43)    was 5.0
+    0.40,    ... % n         (0.4 * 1.01)  was 0.10
+    0.012,   ... % m/n       (0.4 * 0.030) was 0.006
+    1.2e5,   ... % t_capture (0.4 * 3.0e5) was 7.5e4
+    0.10     ... % U_grad    no pilot yet; ~3% of its allowed range
 ];
 
 n_params = length(params_init);
+
+%% --- Proposal type ---------------------------------------------------
+% 'diagonal'   : independent Gaussian per parameter, scaled by p_steps.
+%                Cannot exploit correlations between parameters.
+% 'covariance' : STAGE 2.  Multivariate Gaussian using a covariance
+%                estimated from a pilot chain, scaled by the standard
+%                2.38^2/d factor (Roberts & Rosenthal optimal scaling).
+%
+% Why it helps: the posterior here is a long, thin, tilted ellipse (see
+% the t_capture-U_post and ksn-n panels).  A diagonal proposal draws an
+% axis-aligned cloud, so to stay inside a thin tilted ellipse every step
+% must shrink to the ellipse's NARROWEST width -- the chain then crawls
+% along the long axis.  A covariance proposal draws an ellipse matched to
+% the posterior's shape and orientation: large steps along the long axis,
+% small across it.
+%
+% This stays a valid Metropolis sampler because the proposal is still
+% SYMMETRIC (a Gaussian centred on the current state), so q(x|y) = q(y|x)
+% and the proposal terms cancel exactly as before.  The requirement is
+% that the covariance is FIXED during sampling -- estimated beforehand
+% from a pilot run, never adapted mid-chain, which would break the Markov
+% property.
+prop_mode  = 'diagonal';           % 'diagonal' | 'covariance'
+pilot_file = '';                   % e.g. 'params_HC_capture.mat'
+                                   % required when prop_mode='covariance'
 
 %% ========================================================================
 %  SECTION 3: LOAD STREAM DATA
@@ -325,6 +376,55 @@ total_iter = n_burnin + n_postburn;
 % MATLAB session would reproduce the identical chain.
 rng('shuffle');
 
+%% --- Build the proposal -------------------------------------------------
+prop_L     = [];    % Cholesky factor for 'covariance' mode; [] = diagonal
+prop_scale = 1.0;   % scalar multiplier tuned during burn-in (both modes)
+
+if strcmpi(prop_mode, 'covariance')
+    if isempty(pilot_file) || ~exist(pilot_file, 'file')
+        error(['prop_mode = ''covariance'' requires pilot_file to point at ' ...
+               'a saved chain (params_*.mat) to estimate the covariance ' ...
+               'from. Run once in ''diagonal'' mode first.']);
+    end
+    pilot = load(pilot_file, 'params_post');
+    Sig   = cov(pilot.params_post);
+
+    if size(Sig, 1) == n_params
+        Sigma = Sig;
+    elseif size(Sig, 1) == n_params - 1
+        % Pilot predates the U_grad parameter.  Embed it and give the new
+        % parameter an independent variance from its diagonal step, so a
+        % 6-parameter chain can still seed the 7-parameter run.
+        Sigma = zeros(n_params);
+        Sigma(1:n_params-1, 1:n_params-1) = Sig;
+        Sigma(n_params, n_params)         = p_steps(n_params)^2;
+        fprintf(['Pilot has %d parameters; embedded into %d with an ' ...
+                 'independent variance for the new one.\n'], ...
+                 size(Sig,1), n_params);
+    else
+        error('Pilot chain has %d parameters; expected %d or %d.', ...
+              size(Sig,1), n_params, n_params-1);
+    end
+
+    % Ridge for numerical positive-definiteness.  Scaled per parameter
+    % because these span ~11 orders of magnitude (U_pre ~1e-5 vs
+    % t_capture ~1e6), so an absolute ridge would be meaningless.
+    Sigma = Sigma + diag(max(diag(Sigma), realmin) * 1e-10);
+
+    % Roberts & Rosenthal optimal scaling for random-walk Metropolis.
+    C = (2.38^2 / n_params) * Sigma;
+
+    [prop_L, pd_fail] = chol(C, 'lower');
+    if pd_fail ~= 0
+        error(['Pilot covariance is not positive definite (chol failed at ' ...
+               'leading minor %d). The pilot chain is probably too short ' ...
+               'or degenerate -- run longer in diagonal mode first.'], pd_fail);
+    end
+    fprintf('Proposal: multivariate normal, covariance from %s\n', pilot_file);
+else
+    fprintf('Proposal: diagonal, p_steps = %s\n', mat2str(p_steps, 3));
+end
+
 % Storage arrays
 params      = zeros(total_iter, n_params);
 logL_chain  = zeros(total_iter, 1);
@@ -343,10 +443,11 @@ fprintf('Derived K at start: %.3e  (ksn_ref=%.1f, n=%.2f)\n', ...
 % Build rate/transition vectors for the generalized forward model
 U_rates_init = [params_init(1), params_init(2)];
 t_trans_init = params_init(6);
+U_pat_init   = hc_uplift_pattern(S, params_init(7));
 
 fprintf('Running initial forward model...\n');
 Z_mod = hc_river_forward_model(S, S_DA, U_rates_init, t_trans_init, ...
-    K_init, m_init, params_init(4), dt_forward);
+    K_init, m_init, params_init(4), dt_forward, U_pat_init);
 
 % Initial cave predictions
 cave_pred = cave_forward_model(cave_ages, U_rates_init, t_trans_init);
@@ -425,7 +526,11 @@ for i = 2:total_iter
         win_acc = accept_window / tune_interval;
         scale   = exp(win_acc - target_accept);   % >1 too high, <1 too low
         scale   = min(max(scale, 0.5), 2.0);      % clamp per-update change
-        p_steps = p_steps .* scale;
+        % Tune ONE shared scalar, which works for either proposal mode.
+        % Note this can fix the overall step size but never the relative
+        % proportions between parameters -- that is what p_steps (or the
+        % pilot covariance) has to get right.
+        prop_scale = prop_scale * scale;
         accept_window = 0;
         if mod(i-1, tune_interval*5) == 0
             fprintf('    [tune] iter %d: window accept=%.1f%%, step scale=%.3f\n', ...
@@ -436,8 +541,14 @@ for i = 2:total_iter
     % Current parameters
     current = params(i-1, :);
 
-    % Propose new parameters (Gaussian random walk)
-    candidate = current + p_steps .* randn(1, n_params);
+    % Propose new parameters.  Symmetric Gaussian random walk in both
+    % modes; 'covariance' draws from an ellipse matched to the posterior's
+    % shape and orientation rather than an axis-aligned one.
+    if isempty(prop_L)
+        candidate = current + prop_scale * (p_steps .* randn(1, n_params));
+    else
+        candidate = current + prop_scale * (prop_L * randn(n_params, 1))';
+    end
 
     % Check prior
     lp_cand = logprior_hc(candidate, prior_bounds, cave_prior);
@@ -460,10 +571,11 @@ for i = 2:total_iter
 
     U_rates_cand = [candidate(1), candidate(2)];
     t_trans_cand = candidate(6);
+    U_pat_cand   = hc_uplift_pattern(S, candidate(7));
 
     try
         Z_cand = hc_river_forward_model(S, S_DA, U_rates_cand, ...
-            t_trans_cand, K_cand, m_cand, candidate(4), dt_forward);
+            t_trans_cand, K_cand, m_cand, candidate(4), dt_forward, U_pat_cand);
 
         cave_cand = cave_forward_model(cave_ages, U_rates_cand, t_trans_cand);
 
@@ -500,9 +612,15 @@ for i = 2:total_iter
         continue;
     end
 
-    % Proposal probabilities (symmetric, so they cancel)
-    lq_fwd = logproposal_hc(current, candidate, p_steps);
-    lq_rev = logproposal_hc(candidate, current, p_steps);
+    % Proposal probabilities.  Symmetric in BOTH modes, so these are
+    % exactly equal and cancel below; retained in diagonal mode to match
+    % Gallen's formulation.
+    if isempty(prop_L)
+        lq_fwd = logproposal_hc(current, candidate, prop_scale * p_steps);
+        lq_rev = logproposal_hc(candidate, current, prop_scale * p_steps);
+    else
+        lq_fwd = 0;  lq_rev = 0;   % symmetric MVN: cancels exactly
+    end
 
     % Log acceptance ratio
     log_alpha = (lp_cand + logL_cand + lq_rev) - ...
@@ -551,9 +669,13 @@ fprintf('Post-burn-in acceptance rate: %.1f%%  (target ~%.0f%%)\n', ...
     100 * acc_post, 100 * target_accept);
 
 if adapt_steps
-    fprintf('Tuned step sizes (frozen after burn-in): %s\n', ...
-        mat2str(p_steps, 3));
+    fprintf('Tuned proposal scale (frozen after burn-in): %.4g\n', prop_scale);
+    if isempty(prop_L)
+        fprintf('Effective step sizes: %s\n', ...
+            mat2str(prop_scale * p_steps, 3));
+    end
 end
+
 
 if n_ffail > 0
     fprintf('WARNING: forward model failed on %d/%d iterations (%.2f%%).\n', ...
@@ -578,8 +700,23 @@ logL_post   = logL_chain(n_burnin+1:end);
 % Compute statistics.  Units in param_names must match param_scale:
 % rates are displayed in mm/yr (scale 1e3) and t_capture in Ma (1e-6).
 param_names = {'U_{pre} (mm/yr)', 'U_{post} (mm/yr)', 'k_{sn} relict', ...
-               'n', 'm/n', 't_{capture} (Ma)'};
-param_scale = [1e3, 1e3, 1, 1, 1, 1e-6];
+               'n', 'm/n', 't_{capture} (Ma)', 'U_{grad}'};
+param_scale = [1e3, 1e3, 1, 1, 1, 1e-6, 1];
+
+% Diagnostic: are the frozen steps well matched to the posterior width?
+% Ratios far below ~0.2 mean the chain is crawling -- and acceptance then
+% looks deceptively healthy, which is exactly how the previous run hid an
+% IACT of ~9000 behind a 51% acceptance rate.
+if isempty(prop_L)
+    post_sd = std(params_post, 0, 1);
+    ratio   = (prop_scale * p_steps) ./ max(post_sd, realmin);
+    fprintf('\nStep / posterior-sigma ratio (want ~0.3-0.5):\n');
+    for j = 1:n_params
+        flag = '';
+        if ratio(j) < 0.1 || ratio(j) > 1.5, flag = '   <-- CHECK'; end
+        fprintf('  %-22s %.3f%s\n', param_names{j}, ratio(j), flag);
+    end
+end
 
 fprintf('\n========== POSTERIOR SUMMARY ==========\n');
 fprintf('%-20s %12s %12s %20s %20s\n', 'Parameter', 'MAP', 'Median', '68% CI', '95% CI');

@@ -1,5 +1,5 @@
 function [Z_mod] = hc_river_forward_model(S, S_DA, U_rates, ...
-    t_transitions, K, m, n, dt)
+    t_transitions, K, m, n, dt, U_pattern)
 % HC_RIVER_FORWARD_MODEL  Forward model for river incision following
 % drainage capture in Hells Canyon.
 %
@@ -35,6 +35,15 @@ function [Z_mod] = hc_river_forward_model(S, S_DA, U_rates, ...
 %   m              - Drainage area exponent, scalar
 %   n              - Slope exponent, scalar
 %   dt             - Time step (years)
+%   U_pattern      - OPTIONAL [N x 1] spatial multiplier on the uplift
+%                    rate, one value per stream node (see
+%                    hc_uplift_pattern.m).  The uplift field in phase p is
+%                    U_rates(p) * U_pattern, so U_rates are the rates
+%                    wherever U_pattern == 1 (by convention, the outlet).
+%                    Omit or pass [] for spatially uniform uplift, which
+%                    reproduces the previous behaviour exactly.
+%                    Gallen's river_incision_forward_model likewise takes
+%                    a vector uplift field (his flexural S_U).
 %
 % Outputs:
 %   Z_mod          - Modeled elevations at each stream node (m), column vector
@@ -57,9 +66,24 @@ S_DA = S_DA(:);
 U_rates = U_rates(:)';
 t_transitions = t_transitions(:)';
 
+% Spatial uplift pattern: default to uniform (all ones), which reproduces
+% the scalar-uplift behaviour exactly.
+if nargin < 9 || isempty(U_pattern)
+    U_pattern = ones(numel(S_DA), 1);
+else
+    U_pattern = double(U_pattern(:));
+    if numel(U_pattern) ~= numel(S_DA)
+        error('hc_river_forward_model:badPattern', ...
+              'U_pattern has %d entries but the network has %d nodes.', ...
+              numel(U_pattern), numel(S_DA));
+    end
+end
+
 %% Compute initial steady-state profile with the oldest (background) rate
+% The steady state under a spatially varying field is still pointwise
+% U(x) = K A^m S^n, so calculate_z just takes the full field.
 mn = m / n;
-Z = calculate_z(S, S_DA, U_rates(1), K, mn, n);
+Z = calculate_z(S, S_DA, U_rates(1) * U_pattern, K, mn, n);
 Z = check_z(S, Z);
 
 %% Prepare the implicit finite-difference solver
@@ -94,7 +118,7 @@ for phase = 2:length(U_rates)
 
     for step = 1:n_steps
         Z = fastscape_eroder_outlets(Z, n, dt_phase, Af, d, r, dx, ...
-            U_rates(phase), outlet_nodes);
+            U_rates(phase) * U_pattern, outlet_nodes);
         % Enforce a downstream-monotonic profile after every erosion
         % step, exactly as in Gallen's river_incision_forward_model.m
         % (check_z is called inside the time loop there).
