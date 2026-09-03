@@ -156,9 +156,15 @@ prior_bounds = [
                       %            (Gallen's bayes_profiler allowed n to 20)
     0.3,    0.8;      % m/n:       typical concavity range
     0.5e6,  5e6;      % t_capture: 0.5 to 5 Ma
-   -0.9,    2.0;      % U_grad:    0 = uniform (previous model).  Lower
+   -0.99,   2.0;      % U_grad:    0 = uniform (previous model).  Lower
                       %            bound > -1 keeps the uplift field
-                      %            positive everywhere.
+                      %            positive everywhere.  Widened from -0.9
+                      %            after the first 7-parameter run pinned
+                      %            the posterior against it (95% CI lower
+                      %            limit -0.8984 vs a -0.9 wall).  If it
+                      %            rails again at -0.99, the LINEAR form
+                      %            is refuted, not merely the bound: see
+                      %            hc_uplift_pattern.m.
 ];
 
 % --- Informative priors from cave constraints ---
@@ -730,6 +736,36 @@ for j = 1:n_params
 
     fprintf('%-20s %12.4g %12.4g [%8.4g, %8.4g] [%8.4g, %8.4g]\n', ...
         param_names{j}, map_val, med_val, ci68(1), ci68(2), ci95(1), ci95(2));
+end
+
+%% --- Prior-bound check --------------------------------------------------
+% A posterior pressed against a prior bound means the BOUND is setting the
+% answer, not the data -- and it distorts every parameter correlated with
+% it.  This project has now been caught by it three times (n at 3,
+% log10(K) at -9, U_grad at -0.9), so the check is automatic.
+fprintf('\nPrior-bound check (95%% CI vs the hard walls):\n');
+any_railed = false;
+for j = 1:n_params
+    lo   = prior_bounds(j,1);
+    hi   = prior_bounds(j,2);
+    span = hi - lo;
+    q    = prctile(params_post(:,j), [2.5, 97.5]);
+    hit_lo = (q(1) - lo) < 0.02 * span;
+    hit_hi = (hi - q(2)) < 0.02 * span;
+
+    if hit_lo || hit_hi
+        any_railed = true;
+        if hit_hi, side = 'UPPER'; edge = hi; else, side = 'LOWER'; edge = lo; end
+        fprintf('  RAILED  %-22s [%10.4g, %10.4g]  presses %s wall %.4g\n', ...
+                param_names{j}, q(1), q(2), side, edge);
+    else
+        fprintf('  ok      %-22s [%10.4g, %10.4g]\n', param_names{j}, q(1), q(2));
+    end
+end
+if any_railed
+    fprintf(['  --> Widen the flagged bound(s) and re-run before trusting\n' ...
+             '      ANY parameter: a railed parameter is set by the prior,\n' ...
+             '      not the data, and drags its correlates with it.\n']);
 end
 
 % K is a DERIVED quantity: K = U_pre / ksn_ref^n, evaluated per sample so
