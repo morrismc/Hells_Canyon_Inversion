@@ -35,6 +35,8 @@ addParameter(p, 'cmap',     'parula');
 addParameter(p, 'overlay',  []);
 addParameter(p, 'label',    true);
 addParameter(p, 'labelfmt', '(%.4g, %.4g)');
+addParameter(p, 'markersize', 15);      % overlay marker; raise for posters
+addParameter(p, 'fontsize',   8);       % overlay label text
 parse(p, varargin{:});
 o = p.Results;
 
@@ -73,8 +75,9 @@ colormap(gca, o.cmap);
 
 if ~isempty(o.overlay)
     hold on
-    plot(o.overlay(1), o.overlay(2), 'p', 'MarkerSize', 15, ...
-         'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'k', 'LineWidth', 1);
+    plot(o.overlay(1), o.overlay(2), 'p', 'MarkerSize', o.markersize, ...
+         'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'k', ...
+         'LineWidth', max(1, o.markersize/15));
 
     if ~isequal(o.label, false)
         if ischar(o.label) || isstring(o.label)
@@ -86,7 +89,7 @@ if ~isempty(o.overlay)
         % it a solid background so it stays readable over dense bins.
         xr = diff(xlim); yr = diff(ylim);
         text(o.overlay(1) + 0.03*xr, o.overlay(2) + 0.04*yr, txt, ...
-             'FontSize', 8, 'FontWeight', 'bold', 'Color', 'k', ...
+             'FontSize', o.fontsize, 'FontWeight', 'bold', 'Color', 'k', ...
              'BackgroundColor', 'w', 'EdgeColor', [0.4 0.4 0.4], ...
              'Margin', 1, 'Clipping', 'on');
     end

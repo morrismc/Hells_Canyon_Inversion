@@ -30,6 +30,11 @@ addParameter(p, 'scale', 'sqrt', @ischar);
 addParameter(p, 'nbins', 55);
 addParameter(p, 'maxn',  3e5);
 addParameter(p, 'cmap',  'parula');
+% fontscale multiplies EVERY font size, so one number takes the figure
+% from screen to poster. >1.3 also thins the ticks, because at poster
+% sizes the default tick labels collide across 7x7 panels.
+addParameter(p, 'fontscale', 1, @isscalar);
+addParameter(p, 'figpos', [60 60 1500 1150]);
 parse(p, varargin{:});
 o = p.Results;
 
@@ -50,7 +55,9 @@ end
 P    = P    .* param_scale(:)';
 pmap = params_map(:)' .* param_scale(:)';
 
-fig = figure('Position', [60 60 1500 1150], 'Color', 'w');
+fs = o.fontscale;
+nt = 3;                      % ticks per axis when scaled up
+fig = figure('Position', o.figpos, 'Color', 'w');
 
 for i = 1:np          % row    -> y variable
     for j = 1:i       % column -> x variable
@@ -63,39 +70,56 @@ for i = 1:np          % row    -> y variable
                       'EdgeColor', 'none');
             hold on
             yl = ylim;
-            plot([pmap(i) pmap(i)], yl, 'r-', 'LineWidth', 1.5);
+            plot([pmap(i) pmap(i)], yl, 'r-', 'LineWidth', 1.5*fs);
             ylim(yl);
             % MAP value annotated in the panel corner, as in Gallen Fig 6.
             text(0.96, 0.90, sprintf('%.4g', pmap(i)), ...
                  'Units', 'normalized', 'HorizontalAlignment', 'right', ...
-                 'FontSize', 8, 'FontWeight', 'bold', ...
+                 'FontSize', 8*fs, 'FontWeight', 'bold', ...
                  'BackgroundColor', 'w', 'Margin', 1);
             set(ax, 'YTick', []);
-            title(param_names{i}, 'FontSize', 9, 'Interpreter', 'tex');
+            title(param_names{i}, 'FontSize', 9*fs, 'Interpreter', 'tex');
         else
             % ---- bivariate density ----
             hc_density_plot(P(:,j), P(:,i), ...
                 'nbins', o.nbins, 'scale', o.scale, 'cmap', o.cmap, ...
-                'overlay', [pmap(j) pmap(i)], 'label', false);
+                'overlay', [pmap(j) pmap(i)], 'label', false, ...
+                'markersize', 15*fs);
+        end
+
+        set(ax, 'FontSize', 7*fs, 'LineWidth', max(0.5, 0.5*fs));
+
+        % Thin the ticks BEFORE blanking any labels: setting XTick puts the
+        % tick labels back into automatic mode, so doing it afterwards would
+        % undo the blanking on the interior panels.
+        if fs > 1.3
+            % Fewer, rounder ticks so poster-size labels do not overlap.
+            xl = xlim(ax);
+            set(ax, 'XTick', linspace(xl(1), xl(2), nt));
+            xtickformat(ax, '%.3g');
+            if i ~= j
+                ylv = ylim(ax);
+                set(ax, 'YTick', linspace(ylv(1), ylv(2), nt));
+                ytickformat(ax, '%.3g');
+            end
         end
 
         % Label only the outer edges, or the grid becomes unreadable.
         if i == np
-            xlabel(param_names{j}, 'FontSize', 8, 'Interpreter', 'tex');
+            xlabel(param_names{j}, 'FontSize', 8*fs, 'Interpreter', 'tex');
         else
             set(ax, 'XTickLabel', []);
         end
         if j == 1 && i > 1
-            ylabel(param_names{i}, 'FontSize', 8, 'Interpreter', 'tex');
+            ylabel(param_names{i}, 'FontSize', 8*fs, 'Interpreter', 'tex');
         elseif j > 1
             set(ax, 'YTickLabel', []);
         end
-        set(ax, 'FontSize', 7);
     end
 end
 
 sgtitle({'Posterior probability matrix', ...
          'diagonal: marginals (MAP in red);  lower: bivariate density'}, ...
-        'FontSize', 13, 'Interpreter', 'none');
+        'FontSize', 13*fs, 'Interpreter', 'none');
 
 end
