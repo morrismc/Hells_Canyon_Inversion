@@ -17,8 +17,12 @@ Zs  = zeros(numel(S_DA), numel(dts));  tt = zeros(size(dts));
 
 for k = 1:numel(dts)
     tic;
+    if numel(p) >= 7, U_pat = hc_uplift_pattern(S, p(7));
+    else,             U_pat = [];   % pre-U_grad chain: uniform uplift
+    end
     Zs(:,k) = hc_river_forward_model(S, S_DA, [p(1) p(2)], p(6), ...
-                                     hc_derive_K(p), p(5)*p(4), p(4), dts(k));
+                                     hc_derive_K(p), p(5)*p(4), p(4), ...
+                                     dts(k), U_pat);
     tt(k) = toc;
 end
 
