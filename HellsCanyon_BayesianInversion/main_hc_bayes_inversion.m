@@ -282,9 +282,20 @@ n_params = length(params_init);
 % that the covariance is FIXED during sampling -- estimated beforehand
 % from a pilot run, never adapted mid-chain, which would break the Markov
 % property.
-prop_mode  = 'diagonal';           % 'diagonal' | 'covariance'
-pilot_file = '';                   % e.g. 'params_HC_capture.mat'
-                                   % required when prop_mode='covariance'
+% 'auto' is the recommended mode and removes the need to run the inversion
+% twice.  It runs a short PILOT phase with the diagonal proposal, estimates
+% the covariance from it, then switches to the multivariate proposal for
+% the rest of the run.  The pilot iterations are discarded along with
+% burn-in, so this stays a valid sampler: the covariance is frozen BEFORE
+% the sampling phase begins and is never touched again, which is the
+% requirement that adapting mid-chain would violate.
+%
+%   'diagonal'   fixed diagonal proposal throughout
+%   'covariance' multivariate, from a pilot chain saved by an earlier run
+%   'auto'       pilot -> covariance, all in one run  (recommended)
+prop_mode  = 'auto';
+n_pilot    = 2e4;                  % pilot iterations for 'auto' (discarded)
+pilot_file = '';                   % only for prop_mode = 'covariance'
 
 %% ========================================================================
 %  SECTION 3: LOAD STREAM DATA
@@ -375,7 +386,15 @@ fprintf('Data loaded: %d stream nodes, %d cave observations\n', n_stream, n_cave
 %  SECTION 4: INITIALIZE MCMC
 %  ========================================================================
 
-total_iter = n_burnin + n_postburn;
+% In 'auto' mode the pilot precedes burn-in and is discarded with it, so
+% n_discard is the index after which samples count toward the posterior.
+if strcmpi(prop_mode, 'auto')
+    n_pilot_use = n_pilot;
+else
+    n_pilot_use = 0;
+end
+n_discard  = n_pilot_use + n_burnin;
+total_iter = n_discard + n_postburn;
 
 % Make sure new MATLAB sessions use different random numbers (as in
 % Gallen's master script: "rng shuffle").  Without this, every fresh
@@ -500,8 +519,14 @@ fprintf('  stream_err = %.0f m, n_stream = %d, n_cave = %d\n', ...
     stream_err, n_stream, n_cave);
 fprintf('--- End Initial Diagnostics ---\n');
 
-fprintf('\nStarting MCMC: %d burn-in + %d post-burn-in iterations\n', ...
-    n_burnin, n_postburn);
+if n_pilot_use > 0
+    fprintf(['\nStarting MCMC: %d pilot + %d burn-in + %d post-burn-in\n' ...
+             '  (pilot and burn-in are both discarded)\n'], ...
+            n_pilot_use, n_burnin, n_postburn);
+else
+    fprintf('\nStarting MCMC: %d burn-in + %d post-burn-in iterations\n', ...
+        n_burnin, n_postburn);
+end
 
 %% ========================================================================
 %  SECTION 5: RUN MCMC
@@ -528,7 +553,32 @@ for i = 2:total_iter
     % Automates the manual step tuning Gallen does by trial and error.
     % Runs at the top of the iteration so it always fires on schedule,
     % regardless of prior-rejection "continue" statements below.
-    if adapt_steps && i <= n_burnin && i > 2 && mod(i-1, tune_interval) == 0
+    % --- 'auto': end of pilot, build the covariance proposal ------------
+    % Done ONCE, here, and frozen thereafter.  The pilot's own first half
+    % is dropped before estimating the covariance so its burn-in does not
+    % inflate the variance.
+    if strcmpi(prop_mode, 'auto') && isempty(prop_L) && i == n_pilot_use + 1
+        P_pilot = params(max(2, round(n_pilot_use/2)):n_pilot_use, :);
+        Sig     = cov(P_pilot);
+        Sig     = Sig + diag(max(diag(Sig), realmin) * 1e-10);
+        [L_try, pd_fail] = chol((2.38^2/n_params) * Sig, 'lower');
+        if pd_fail == 0
+            prop_L     = L_try;
+            prop_scale = 1.0;   % the covariance now carries the scale
+            fprintf(['\n  [auto] pilot complete at iter %d: switching to the ' ...
+                     'covariance proposal.\n'], n_pilot_use);
+            fprintf('  [auto] pilot posterior sd: %s\n', ...
+                    mat2str(std(P_pilot, 0, 1), 3));
+        else
+            % Do not abort a long run over a singular pilot -- carry on
+            % with the diagonal proposal and say so.
+            fprintf(['\n  [auto] WARNING: pilot covariance not positive ' ...
+                     'definite (minor %d).\n         Continuing with the ' ...
+                     'diagonal proposal; lengthen n_pilot.\n'], pd_fail);
+        end
+    end
+
+    if adapt_steps && i <= n_discard && i > 2 && mod(i-1, tune_interval) == 0
         win_acc = accept_window / tune_interval;
         scale   = exp(win_acc - target_accept);   % >1 too high, <1 too low
         scale   = min(max(scale, 0.5), 2.0);      % clamp per-update change
@@ -670,7 +720,7 @@ fprintf('Overall acceptance rate: %.1f%%\n', 100 * n_accept / total_iter);
 
 % Acceptance split (burn-in is inflated/tuned; post-burn-in is the chain
 % that actually matters for the posterior).
-acc_post = mean(accepted(n_burnin+1:end));
+acc_post = mean(accepted(n_discard+1:end));
 fprintf('Post-burn-in acceptance rate: %.1f%%  (target ~%.0f%%)\n', ...
     100 * acc_post, 100 * target_accept);
 
@@ -700,8 +750,8 @@ end
 %  SECTION 6: EXTRACT POST-BURN-IN RESULTS
 %  ========================================================================
 
-params_post = params(n_burnin+1:end, :);
-logL_post   = logL_chain(n_burnin+1:end);
+params_post = params(n_discard+1:end, :);
+logL_post   = logL_chain(n_discard+1:end);
 
 % Compute statistics.  Units in param_names must match param_scale:
 % rates are displayed in mm/yr (scale 1e3) and t_capture in Ma (1e-6).
@@ -856,7 +906,8 @@ end
 
 save(fullfile(output_dir, ['params_' fileTag '.mat']), 'params', 'params_post', ...
     'params_map', 'logL_chain', 'logL_post', 'accepted', 'prior_bounds', ...
-    'cave_prior', 'p_steps', 'n_burnin', 'n_postburn', 'param_names');
+    'cave_prior', 'p_steps', 'n_burnin', 'n_postburn', 'param_names', ...
+    'n_pilot_use', 'n_discard', 'prop_mode', 'prop_scale');
 
 save(fullfile(output_dir, ['mMAP_' fileTag '.mat']), 'params_map', ...
     'Z_mod_map', 'cave_pred_map', 'logP_map');
@@ -867,7 +918,9 @@ fprintf('\nResults saved to: %s\n', output_dir);
 %  SECTION 8: BASIC DIAGNOSTIC PLOTS
 %  ========================================================================
 
-plot_hc_results(params, logL_chain, n_burnin, params_map, Z_mod_map, ...
+% NOTE: pass n_discard, not n_burnin -- in 'auto' mode the pilot precedes
+% burn-in and must not be counted as posterior by the plotter.
+plot_hc_results(params, logL_chain, n_discard, params_map, Z_mod_map, ...
     Sz_norm, S, cave_ages, cave_heights, cave_height_err, cave_pred_map, ...
     prior_bounds, cave_prior, param_names, param_scale, output_dir, fileTag, S_DA);
 
