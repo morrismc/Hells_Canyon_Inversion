@@ -109,23 +109,19 @@ fig2 = figure('Position', [100, 100, 1200, 800]);
 % reparameterization did its job this cloud should look roughly round;
 % a narrow curved ridge here means the chain is still mixing badly.
 subplot(2,3,1)
-scatter(params_post(:,3), params_post(:,4), 2, logL_chain(n_burnin+1:end), ...
-    'filled', 'MarkerFaceAlpha', 0.1);
-hold on
-plot(params_map(3), params_map(4), 'rp', 'MarkerSize', 15, 'MarkerFaceColor', 'r');
+hc_density_plot(params_post(:,3), params_post(:,4), ...
+    'overlay', [params_map(3), params_map(4)]);
 xlabel('k_{sn} relict'); ylabel('n');
 title('Sampling coordinates: k_{sn} vs n');
-colorbar; colormap(parula);
+c = colorbar; c.Label.String = 'samples / bin';
 
 % t_capture vs U_post
 subplot(2,3,2)
-scatter(params_post(:,6) * 1e-6, params_post(:,2) * 1e3, 2, ...
-    logL_chain(n_burnin+1:end), 'filled', 'MarkerFaceAlpha', 0.1);
-hold on
-plot(params_map(6)*1e-6, params_map(2)*1e3, 'rp', 'MarkerSize', 15, ...
-    'MarkerFaceColor', 'r');
+hc_density_plot(params_post(:,6)*1e-6, params_post(:,2)*1e3, ...
+    'overlay', [params_map(6)*1e-6, params_map(2)*1e3]);
 xlabel('t_{capture} (Ma)'); ylabel('U_{post} (mm/yr)');
 title('Capture Time vs Post-Capture Rate');
+c = colorbar; c.Label.String = 'samples / bin';
 
 % t_capture histogram with cave prior
 subplot(2,3,3)
@@ -168,14 +164,16 @@ title('Erodibility Posterior (derived)');
 
 % U_pre vs U_post
 subplot(2,3,6)
-scatter(params_post(:,1)*1e3, params_post(:,2)*1e3, 2, ...
-    'filled', 'MarkerFaceAlpha', 0.1);
+hc_density_plot(params_post(:,1)*1e3, params_post(:,2)*1e3, ...
+    'overlay', [params_map(1)*1e3, params_map(2)*1e3]);
 hold on
-plot(params_map(1)*1e3, params_map(2)*1e3, 'rp', 'MarkerSize', 15, ...
-    'MarkerFaceColor', 'r');
-plot([0 0.5], [0 0.5], 'k--');
+% 1:1 line -- U_post > U_pre is enforced structurally, so all mass sits above.
+xl = xlim; yl = ylim;
+plot([0 max(xl(2),yl(2))], [0 max(xl(2),yl(2))], 'k--');
+xlim(xl); ylim(yl);
 xlabel('U_{pre} (mm/yr)'); ylabel('U_{post} (mm/yr)');
 title('Pre vs Post Capture Rates');
+c = colorbar; c.Label.String = 'samples / bin';
 
 sgtitle(sprintf('Parameter Posteriors: %s', fileTag), 'FontSize', 14);
 saveas(fig2, fullfile(output_dir, ['posteriors_' fileTag '.png']));

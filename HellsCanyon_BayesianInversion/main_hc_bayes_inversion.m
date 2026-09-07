@@ -746,12 +746,18 @@ end
 fprintf('\nPrior-bound check (95%% CI vs the hard walls):\n');
 any_railed = false;
 for j = 1:n_params
-    lo   = prior_bounds(j,1);
-    hi   = prior_bounds(j,2);
-    span = hi - lo;
-    q    = prctile(params_post(:,j), [2.5, 97.5]);
-    hit_lo = (q(1) - lo) < 0.02 * span;
-    hit_hi = (hi - q(2)) < 0.02 * span;
+    lo = prior_bounds(j,1);
+    hi = prior_bounds(j,2);
+    q  = prctile(params_post(:,j), [2.5, 97.5]);
+
+    % Measure the gap to each wall against the POSTERIOR's own width, not
+    % against the prior span.  A fraction-of-span test is wrong whenever a
+    % bound spans orders of magnitude: U_pre is bounded [1e-6, 5e-4], so 2%
+    % of that span is 1e-5 -- larger than the whole posterior -- and a
+    % perfectly healthy posterior at 1.3e-5 was flagged as railed.
+    post_w = max(q(2) - q(1), realmin);
+    hit_lo = (q(1) - lo) < 0.1 * post_w;
+    hit_hi = (hi - q(2)) < 0.1 * post_w;
 
     if hit_lo || hit_hi
         any_railed = true;
