@@ -823,6 +823,33 @@ fprintf(['  NOTE: ksn above was measured at TAK theta_ref = 0.45, whereas\n' ...
          '        to that choice -- treat this as an approximate check.\n'], ...
          median(params_post(:,5)));
 
+%% --- Independent concavity check (evaluates the STREAM FIT) ------------
+% Under uniform K and a common steady state, every branch must collapse
+% onto ONE chi-z curve at the correct theta.  mnoptimvar finds the theta
+% that best achieves that; the residual scatter AT THAT OPTIMUM says
+% whether such a theta exists at all.  If it does not, no amount of
+% sampling will fix the profile misfit -- the single-K model is the limit.
+try
+    theta_chk = hc_find_theta('mn_posterior', median(params_post(:,5)), ...
+                              'plot', false);
+    rel_scat = 100 * theta_chk.scatter_opt / max(theta_chk.relief, eps);
+    fprintf('\nConcavity cross-check (TopoToolbox mnoptimvar):\n');
+    fprintf('  optimal theta             : %.4f\n', theta_chk.mn_opt);
+    fprintf('  posterior m/n             : %.4f\n', median(params_post(:,5)));
+    fprintf('  chi-z scatter at optimum  : %.1f m  (%.1f%% of relief)\n', ...
+            theta_chk.scatter_opt, rel_scat);
+    if rel_scat > 10
+        fprintf(['  --> Scatter exceeds 10%% of relief AT THE OPTIMUM: no single\n' ...
+                 '      theta collapses this network, so one K for the whole basin\n' ...
+                 '      is refuted and the profile misfit is structural.\n']);
+    elseif rel_scat < 5
+        fprintf(['  --> Network collapses well, so the concavity is sound and the\n' ...
+                 '      profile residual is a genuine transient/relict signal.\n']);
+    end
+catch ME
+    fprintf('\n(concavity check skipped: %s)\n', ME.message);
+end
+
 %% ========================================================================
 %  SECTION 7: SAVE RESULTS
 %  ========================================================================

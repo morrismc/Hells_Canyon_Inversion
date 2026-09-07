@@ -344,8 +344,19 @@ else
         'HorizontalAlignment', 'center', 'Units', 'normalized', 'FontSize', 14);
 end
 
-sgtitle(sprintf('Trunk Residual Analysis: %s', fileTag), 'FontSize', 14);
+sgtitle(sprintf('Trunk Residual Analysis: %s', fileTag), ...
+        'FontSize', 14, 'Interpreter', 'none');
 saveas(fig4, fullfile(output_dir, ['trunk_residual_' fileTag '.png']));
+
+%% Figure 5: Posterior probability matrix (after Gallen Fig. 6)
+% The marginals in Figure 1 hide the parameter trade-offs entirely; this
+% shows every pairwise covariance at once.
+try
+    fig5 = hc_corner_plot(params_post, params_map, param_names, param_scale);
+    saveas(fig5, fullfile(output_dir, ['posterior_matrix_' fileTag '.png']));
+catch ME
+    fprintf('(posterior matrix skipped: %s)\n', ME.message);
+end
 
 fprintf('Figures saved to: %s\n', output_dir);
 
