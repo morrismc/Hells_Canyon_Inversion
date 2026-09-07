@@ -23,6 +23,8 @@ function out = hc_profile_plot(varargin)
 %   'mn_compare'       second concavity for panel 3; default [] (skip)
 %   'stream_data_file' default 'hc_stream_data.mat'
 %   'a0'               reference area, default 1e6 m^2 (TopoToolbox default)
+%   'layout'           'rows' (default, panels stacked vertically) | 'cols'
+%   'fontscale'        multiplies every font size; raise for posters
 %
 % See also: hc_find_theta, prepare_hc_stream_data
 
@@ -31,6 +33,8 @@ addParameter(p, 'mn', [], @(x) isempty(x) || isscalar(x));
 addParameter(p, 'mn_compare', [], @(x) isempty(x) || isscalar(x));
 addParameter(p, 'stream_data_file', 'hc_stream_data.mat', @ischar);
 addParameter(p, 'a0', 1e6, @isscalar);
+addParameter(p, 'layout', 'rows', @ischar);
+addParameter(p, 'fontscale', 1, @isscalar);
 parse(p, varargin{:});
 o = p.Results;
 
@@ -67,25 +71,40 @@ logA  = log10(max(S_DA, 1));
 
 %% --- figure -----------------------------------------------------------
 npan = 2 + ~isempty(o.mn_compare);
-fig  = figure('Position', [80 80 460*npan 520], 'Color', 'w');
+fs   = o.fontscale;
+
+% Panels stacked as ROWS by default: a long profile and a chi profile
+% share an elevation axis, so putting them one above the other lets the
+% eye carry elevation straight down between them.
+if strcmpi(o.layout, 'cols')
+    nr = 1;  nc = npan;
+    figpos = [80 80 460*npan 520];
+else
+    nr = npan;  nc = 1;
+    figpos = [80 80 820 340*npan];
+end
+sp  = @(k) subplot(nr, nc, k);
+fig = figure('Position', figpos, 'Color', 'w');
 
 % Panel 1: long profile
-subplot(1, npan, 1)
+sp(1)
 plot(d_km, Sz_norm, '.', 'Color', [0.78 0.78 0.78], 'MarkerSize', 2);
 hold on
 if ~isempty(ti)
     [dt, is] = sort(d_km(ti), 'ascend');
     plot(dt, Sz_norm(ti(is)), '-', 'Color', [0.15 0.35 0.75], 'LineWidth', 2);
-    legend('All channels', 'Trunk', 'Location', 'northwest');
+    legend('All channels', 'Trunk', 'Location', 'northwest', ...
+           'FontSize', 10*fs);
 end
-xlabel('Distance from outlet (km)');
-ylabel('Elevation above outlet (m)');
-title('Long profile');
+xlabel('Distance from outlet (km)', 'FontSize', 11*fs);
+ylabel('Elevation above outlet (m)', 'FontSize', 11*fs);
+title('Long profile', 'FontSize', 12*fs);
 grid on; box on
+set(gca, 'FontSize', 10*fs, 'LineWidth', max(0.5, 0.6*fs));
 
 % Panel 2: chi profile at mn
 chi = chitransform(S, S_DA, 'mn', o.mn, 'a0', o.a0);
-subplot(1, npan, 2)
+sp(2)
 scatter(chi, Sz_norm, 3, logA, 'filled');
 hold on
 if ~isempty(ti)
@@ -93,10 +112,12 @@ if ~isempty(ti)
     plot(ct, Sz_norm(ti(is)), 'k-', 'LineWidth', 2);
 end
 cb = colorbar; cb.Label.String = 'log_{10} drainage area (m^2)';
+cb.Label.FontSize = 10*fs; cb.FontSize = 9*fs;
 colormap(gca, parula);
-xlabel('\chi (m)'); ylabel('Elevation above outlet (m)');
-title(sprintf('\\chi profile,  \\theta = %.4f', o.mn));
+xlabel('\chi (m)', 'FontSize', 11*fs); ylabel('Elevation above outlet (m)', 'FontSize', 11*fs);
+title(sprintf('\\chi profile,  \\theta = %.4f', o.mn), 'FontSize', 12*fs);
 grid on; box on
+set(gca, 'FontSize', 10*fs, 'LineWidth', max(0.5, 0.6*fs));
 
 out = struct('mn', o.mn, 'chi', chi, 'Sz_norm', Sz_norm, ...
              'trunk_idx', ti, 'scatter_mn', local_scatter(chi, Sz_norm));
@@ -104,7 +125,7 @@ out = struct('mn', o.mn, 'chi', chi, 'Sz_norm', Sz_norm, ...
 % Panel 3: comparison concavity
 if ~isempty(o.mn_compare)
     chi2 = chitransform(S, S_DA, 'mn', o.mn_compare, 'a0', o.a0);
-    subplot(1, npan, 3)
+    sp(3)
     scatter(chi2, Sz_norm, 3, logA, 'filled');
     hold on
     if ~isempty(ti)
@@ -112,14 +133,17 @@ if ~isempty(o.mn_compare)
         plot(ct2, Sz_norm(ti(is2)), 'k-', 'LineWidth', 2);
     end
     cb = colorbar; cb.Label.String = 'log_{10} drainage area (m^2)';
-    xlabel('\chi (m)'); ylabel('Elevation above outlet (m)');
-    title(sprintf('\\chi profile,  \\theta = %.4f', o.mn_compare));
+    cb.Label.FontSize = 10*fs; cb.FontSize = 9*fs;
+    xlabel('\chi (m)', 'FontSize', 11*fs); ylabel('Elevation above outlet (m)', 'FontSize', 11*fs);
+    title(sprintf('\\chi profile,  \\theta = %.4f', o.mn_compare), ...
+          'FontSize', 12*fs);
     grid on; box on
+    set(gca, 'FontSize', 10*fs, 'LineWidth', max(0.5, 0.6*fs));
     out.chi_compare  = chi2;
     out.scatter_compare = local_scatter(chi2, Sz_norm);
 end
 
-sgtitle('Drainage network: long profile and \chi profile', 'FontSize', 13);
+sgtitle('Drainage network: long profile and \chi profile', 'FontSize', 13*fs);
 
 %% --- report -----------------------------------------------------------
 relief = max(Sz_norm);
